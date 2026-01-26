@@ -4,10 +4,12 @@
  * - Diagonal cuts and aggressive angles
  * - Neon green accents on black
  * - No rounded corners, sharp edges only
+ * - Keyboard support: Enter/Space to start
  */
 
 import { motion } from "framer-motion";
 import { Zap, Target, Clock } from "lucide-react";
+import { useEffect, useCallback } from "react";
 import { DifficultySelector } from "./DifficultySelector";
 import type { Difficulty, DifficultyConfig } from "@/hooks/useGameState";
 
@@ -24,6 +26,43 @@ export function StartScreen({
   difficultyConfig,
   onDifficultyChange 
 }: StartScreenProps) {
+  // Keyboard event handler for start screen
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    // Enter or Space to start the game
+    if (event.code === "Enter" || event.code === "Space") {
+      // Only if not focused on a button or interactive element
+      const activeElement = document.activeElement;
+      const isButton = activeElement?.tagName === "BUTTON";
+      
+      if (!isButton) {
+        event.preventDefault();
+        onStart();
+      }
+    }
+    
+    // Number keys 1-3 to select difficulty
+    if (event.code === "Digit1" || event.code === "Numpad1") {
+      event.preventDefault();
+      onDifficultyChange("easy");
+    }
+    if (event.code === "Digit2" || event.code === "Numpad2") {
+      event.preventDefault();
+      onDifficultyChange("normal");
+    }
+    if (event.code === "Digit3" || event.code === "Numpad3") {
+      event.preventDefault();
+      onDifficultyChange("hard");
+    }
+  }, [onStart, onDifficultyChange]);
+
+  // Add keyboard event listener
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
   return (
     <div className="min-h-screen flex flex-col bg-background overflow-hidden">
       {/* Hero Section with diagonal cut */}
@@ -72,7 +111,7 @@ export function StartScreen({
             icon={<Target className="w-8 h-8" />}
             step="02"
             title="TAP"
-            description="Click or tap as fast as you can"
+            description="Click, tap, or press Space/Enter"
           />
           <InstructionCard
             icon={<Zap className="w-8 h-8" />}
@@ -111,6 +150,40 @@ export function StartScreen({
         >
           START {difficultyConfig.name}
         </motion.button>
+
+        {/* Keyboard hints */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5, duration: 0.3 }}
+          className="relative z-10 mt-6"
+        >
+          <div className="flex flex-wrap items-center justify-center gap-4 text-white/40 text-sm">
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
+                SPACE
+              </kbd>
+              <span>or</span>
+              <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
+                ENTER
+              </kbd>
+              <span>to start</span>
+            </div>
+            <span className="hidden sm:inline">•</span>
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
+                1
+              </kbd>
+              <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
+                2
+              </kbd>
+              <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
+                3
+              </kbd>
+              <span>difficulty</span>
+            </div>
+          </div>
+        </motion.div>
       </div>
 
       {/* Diagonal stripe divider */}

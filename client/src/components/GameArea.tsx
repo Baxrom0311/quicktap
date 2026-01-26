@@ -4,9 +4,11 @@
  * - Giant reaction time numbers (60% viewport)
  * - Instant state changes, no easing
  * - Difficulty-based target size and colors
+ * - Keyboard support: Spacebar and Enter for tapping
  */
 
 import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useCallback } from "react";
 import type { GameState, DifficultyConfig, Difficulty } from "@/hooks/useGameState";
 
 interface GameAreaProps {
@@ -34,10 +36,39 @@ export function GameArea({
     }
   };
 
+  // Keyboard event handler
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    // Prevent default behavior for spacebar (scrolling) and Enter
+    if (event.code === "Space" || event.code === "Enter") {
+      event.preventDefault();
+      
+      if (gameState === "waiting" || gameState === "ready") {
+        onTap();
+      } else if (gameState === "early" || gameState === "result") {
+        onTryAgain();
+      }
+    }
+    
+    // Escape key to go back
+    if (event.code === "Escape") {
+      event.preventDefault();
+      onReset();
+    }
+  }, [gameState, onTap, onTryAgain, onReset]);
+
+  // Add keyboard event listener
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center cursor-pointer select-none relative overflow-hidden"
       onClick={handleClick}
+      tabIndex={0}
       style={{
         background: gameState === "ready" 
           ? difficulty === "hard" 
@@ -99,11 +130,36 @@ export function GameArea({
             e.stopPropagation();
             onReset();
           }}
-          className="absolute top-6 left-6 z-20 text-white/50 hover:text-white font-display text-xl tracking-wider"
+          className="absolute top-6 left-6 z-20 text-white/50 hover:text-white font-display text-xl tracking-wider flex items-center gap-2"
         >
           ← BACK
+          <span className="text-sm text-white/30">[ESC]</span>
         </button>
       )}
+
+      {/* Keyboard hint */}
+      {(gameState === "waiting" || gameState === "ready") && (
+        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20">
+          <KeyboardHint />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function KeyboardHint() {
+  return (
+    <div className="flex items-center gap-4 text-white/40 text-sm">
+      <div className="flex items-center gap-2">
+        <kbd className="px-3 py-1.5 bg-white/10 border border-white/20 font-display text-xs">
+          SPACE
+        </kbd>
+        <span>or</span>
+        <kbd className="px-3 py-1.5 bg-white/10 border border-white/20 font-display text-xs">
+          ENTER
+        </kbd>
+        <span>to tap</span>
+      </div>
     </div>
   );
 }
@@ -210,6 +266,7 @@ function EarlyState({ onTryAgain }: EarlyStateProps) {
         className="mt-12 px-12 py-4 bg-transparent border-2 border-white text-white font-display text-2xl tracking-wider hover:bg-white hover:text-black transition-colors"
       >
         TRY AGAIN
+        <span className="ml-3 text-sm text-white/50">[SPACE]</span>
       </button>
     </motion.div>
   );
@@ -287,6 +344,7 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
           }}
         >
           TRY AGAIN
+          <span className="ml-3 text-sm opacity-60">[SPACE]</span>
         </button>
         <button
           onClick={(e) => {
@@ -296,6 +354,7 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
           className="px-12 py-4 bg-transparent border-2 border-white/30 text-white/60 font-display text-2xl tracking-wider hover:border-white hover:text-white transition-colors"
         >
           HOME
+          <span className="ml-3 text-sm opacity-60">[ESC]</span>
         </button>
       </div>
     </motion.div>
