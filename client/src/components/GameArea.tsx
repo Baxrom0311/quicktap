@@ -5,10 +5,12 @@
  * - Instant state changes, no easing
  * - Difficulty-based target size and colors
  * - Keyboard support: Spacebar and Enter for tapping
+ * - Sound effects for immersive feedback
  */
 
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
+import { Volume2, VolumeX } from "lucide-react";
 import type { GameState, DifficultyConfig, Difficulty } from "@/hooks/useGameState";
 
 interface GameAreaProps {
@@ -19,6 +21,13 @@ interface GameAreaProps {
   onTap: () => void;
   onReset: () => void;
   onTryAgain: () => void;
+  // Sound props
+  playSuccess: () => void;
+  playError: () => void;
+  playTargetAppear: () => void;
+  playExcellent: () => void;
+  isMuted: boolean;
+  toggleMute: () => void;
 }
 
 export function GameArea({
@@ -29,7 +38,43 @@ export function GameArea({
   onTap,
   onReset,
   onTryAgain,
+  playSuccess,
+  playError,
+  playTargetAppear,
+  playExcellent,
+  isMuted,
+  toggleMute,
 }: GameAreaProps) {
+  const prevGameStateRef = useRef<GameState>(gameState);
+
+  // Play sounds on state changes
+  useEffect(() => {
+    const prevState = prevGameStateRef.current;
+    
+    // Target appeared
+    if (prevState === "waiting" && gameState === "ready") {
+      playTargetAppear();
+    }
+    
+    // Early tap
+    if (gameState === "early" && prevState !== "early") {
+      playError();
+    }
+    
+    // Successful tap - play different sound based on reaction time
+    if (gameState === "result" && prevState === "ready" && reactionTime !== null) {
+      // Adjust threshold based on difficulty
+      const excellentThreshold = difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
+      if (reactionTime < excellentThreshold) {
+        playExcellent();
+      } else {
+        playSuccess();
+      }
+    }
+    
+    prevGameStateRef.current = gameState;
+  }, [gameState, reactionTime, difficulty, playTargetAppear, playError, playSuccess, playExcellent]);
+
   const handleClick = () => {
     if (gameState === "waiting" || gameState === "ready") {
       onTap();
@@ -54,7 +99,13 @@ export function GameArea({
       event.preventDefault();
       onReset();
     }
-  }, [gameState, onTap, onTryAgain, onReset]);
+
+    // M key to toggle mute
+    if (event.code === "KeyM") {
+      event.preventDefault();
+      toggleMute();
+    }
+  }, [gameState, onTap, onTryAgain, onReset, toggleMute]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -88,8 +139,21 @@ export function GameArea({
         }}
       />
 
-      {/* Difficulty indicator */}
-      <div className="absolute top-6 right-6 z-20">
+      {/* Top bar with difficulty and mute button */}
+      <div className="absolute top-6 right-6 z-20 flex items-center gap-4">
+        {/* Mute button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleMute();
+          }}
+          className="p-2 text-white/50 hover:text-white transition-colors"
+          title={isMuted ? "Unmute [M]" : "Mute [M]"}
+        >
+          {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+        </button>
+        
+        {/* Difficulty indicator */}
         <span 
           className="font-display text-lg tracking-wider px-3 py-1 border-2"
           style={{ 

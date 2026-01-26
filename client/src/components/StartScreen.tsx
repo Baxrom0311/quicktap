@@ -5,10 +5,11 @@
  * - Neon green accents on black
  * - No rounded corners, sharp edges only
  * - Keyboard support: Enter/Space to start
+ * - Sound toggle control
  */
 
 import { motion } from "framer-motion";
-import { Zap, Target, Clock } from "lucide-react";
+import { Zap, Target, Clock, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useCallback } from "react";
 import { DifficultySelector } from "./DifficultySelector";
 import type { Difficulty, DifficultyConfig } from "@/hooks/useGameState";
@@ -18,13 +19,17 @@ interface StartScreenProps {
   difficulty: Difficulty;
   difficultyConfig: DifficultyConfig;
   onDifficultyChange: (difficulty: Difficulty) => void;
+  isMuted: boolean;
+  toggleMute: () => void;
 }
 
 export function StartScreen({ 
   onStart, 
   difficulty, 
   difficultyConfig,
-  onDifficultyChange 
+  onDifficultyChange,
+  isMuted,
+  toggleMute,
 }: StartScreenProps) {
   // Keyboard event handler for start screen
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
@@ -53,7 +58,13 @@ export function StartScreen({
       event.preventDefault();
       onDifficultyChange("hard");
     }
-  }, [onStart, onDifficultyChange]);
+
+    // M key to toggle mute
+    if (event.code === "KeyM") {
+      event.preventDefault();
+      toggleMute();
+    }
+  }, [onStart, onDifficultyChange, toggleMute]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -76,6 +87,15 @@ export function StartScreen({
       >
         {/* Dark overlay for text readability */}
         <div className="absolute inset-0 bg-black/70" />
+
+        {/* Mute button - top right */}
+        <button
+          onClick={toggleMute}
+          className="absolute top-6 right-6 z-20 p-2 text-white/50 hover:text-white transition-colors"
+          title={isMuted ? "Unmute [M]" : "Mute [M]"}
+        >
+          {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+        </button>
         
         <motion.div
           initial={{ opacity: 0, y: -50 }}
@@ -181,6 +201,13 @@ export function StartScreen({
                 3
               </kbd>
               <span>difficulty</span>
+            </div>
+            <span className="hidden sm:inline">•</span>
+            <div className="flex items-center gap-2">
+              <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
+                M
+              </kbd>
+              <span>mute</span>
             </div>
           </div>
         </motion.div>

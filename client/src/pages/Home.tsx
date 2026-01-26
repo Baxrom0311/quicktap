@@ -6,9 +6,11 @@
  * - Sharp edges, no rounded corners
  * - Instant state transitions
  * - Difficulty-based gameplay variations
+ * - Sound effects for immersive feedback
  */
 
 import { useGameState } from "@/hooks/useGameState";
+import { useSoundEffects } from "@/hooks/useSoundEffects";
 import { StartScreen } from "@/components/StartScreen";
 import { GameArea } from "@/components/GameArea";
 import { HistoryPanel } from "@/components/HistoryPanel";
@@ -32,6 +34,17 @@ export default function Home() {
     clearHistory,
   } = useGameState();
 
+  const {
+    playSuccess,
+    playError,
+    playTargetAppear,
+    playExcellent,
+    playClick,
+    isMuted,
+    toggleMute,
+    initAudioContext,
+  } = useSoundEffects();
+
   // Show game area when playing
   if (gameState !== "idle") {
     return (
@@ -43,6 +56,13 @@ export default function Home() {
         onTap={handleTap}
         onReset={reset}
         onTryAgain={startGame}
+        // Sound props
+        playSuccess={playSuccess}
+        playError={playError}
+        playTargetAppear={playTargetAppear}
+        playExcellent={playExcellent}
+        isMuted={isMuted}
+        toggleMute={toggleMute}
       />
     );
   }
@@ -61,10 +81,19 @@ export default function Home() {
         >
           {/* Start Screen with Difficulty Selector */}
           <StartScreen 
-            onStart={startGame}
+            onStart={() => {
+              initAudioContext(); // Initialize audio on user interaction
+              playClick();
+              startGame();
+            }}
             difficulty={difficulty}
             difficultyConfig={difficultyConfig}
-            onDifficultyChange={setDifficulty}
+            onDifficultyChange={(d) => {
+              playClick();
+              setDifficulty(d);
+            }}
+            isMuted={isMuted}
+            toggleMute={toggleMute}
           />
 
           {/* History Section */}
