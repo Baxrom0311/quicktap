@@ -1,14 +1,53 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 
 export type GameState = "idle" | "waiting" | "ready" | "result" | "early";
+export type Difficulty = "easy" | "normal" | "hard";
+
+export interface DifficultyConfig {
+  name: string;
+  description: string;
+  minDelay: number; // milliseconds
+  maxDelay: number; // milliseconds
+  targetSize: number; // pixels (base size)
+  color: string;
+}
+
+export const DIFFICULTY_CONFIGS: Record<Difficulty, DifficultyConfig> = {
+  easy: {
+    name: "EASY",
+    description: "Longer delays, bigger target",
+    minDelay: 2500,
+    maxDelay: 6000,
+    targetSize: 256,
+    color: "oklch(0.75 0.2 142)", // Lighter green
+  },
+  normal: {
+    name: "NORMAL",
+    description: "Standard challenge",
+    minDelay: 1500,
+    maxDelay: 5000,
+    targetSize: 192,
+    color: "oklch(0.85 0.3 142)", // Neon green
+  },
+  hard: {
+    name: "HARD",
+    description: "Shorter delays, smaller target",
+    minDelay: 800,
+    maxDelay: 3000,
+    targetSize: 128,
+    color: "oklch(0.65 0.25 25)", // Red-orange
+  },
+};
 
 export interface GameAttempt {
   id: string;
   time: number;
   timestamp: Date;
+  difficulty: Difficulty;
 }
 
 const STORAGE_KEY = "quicktap_history";
+const DIFFICULTY_KEY = "quicktap_difficulty";
 const MAX_HISTORY = 10;
 
 function loadHistory(): GameAttempt[] {
@@ -19,6 +58,7 @@ function loadHistory(): GameAttempt[] {
       return parsed.map((item: any) => ({
         ...item,
         timestamp: new Date(item.timestamp),
+        difficulty: item.difficulty || "normal", // Default for old entries
       }));
     }
   } catch (e) {
@@ -35,37 +75,70 @@ function saveHistory(history: GameAttempt[]) {
   }
 }
 
+function loadDifficulty(): Difficulty {
+  try {
+    const stored = localStorage.getItem(DIFFICULTY_KEY);
+    if (stored && (stored === "easy" || stored === "normal" || stored === "hard")) {
+      return stored;
+    }
+  } catch (e) {
+    console.error("Failed to load difficulty:", e);
+  }
+  return "normal";
+}
+
+function saveDifficulty(difficulty: Difficulty) {
+  try {
+    localStorage.setItem(DIFFICULTY_KEY, difficulty);
+  } catch (e) {
+    console.error("Failed to save difficulty:", e);
+  }
+}
+
 export function useGameState() {
   const [gameState, setGameState] = useState<GameState>("idle");
   const [reactionTime, setReactionTime] = useState<number | null>(null);
   const [history, setHistory] = useState<GameAttempt[]>(() => loadHistory());
+  const [difficulty, setDifficultyState] = useState<Difficulty>(() => loadDifficulty());
   
   const startTimeRef = useRef<number | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Calculate average from history
-  const averageTime = history.length > 0
-    ? Math.round(history.reduce((sum, h) => sum + h.time, 0) / history.length)
+  const difficultyConfig = DIFFICULTY_CONFIGS[difficulty];
+
+  // Filter history by current difficulty for stats
+  const filteredHistory = history.filter(h => h.difficulty === difficulty);
+
+  // Calculate average from filtered history
+  const averageTime = filteredHistory.length > 0
+    ? Math.round(filteredHistory.reduce((sum, h) => sum + h.time, 0) / filteredHistory.length)
     : null;
 
-  // Best time from history
-  const bestTime = history.length > 0
-    ? Math.min(...history.map(h => h.time))
+  // Best time from filtered history
+  const bestTime = filteredHistory.length > 0
+    ? Math.min(...filteredHistory.map(h => h.time))
     : null;
+
+  // Set difficulty with persistence
+  const setDifficulty = useCallback((newDifficulty: Difficulty) => {
+    setDifficultyState(newDifficulty);
+    saveDifficulty(newDifficulty);
+  }, []);
 
   // Start the game - begin waiting phase
   const startGame = useCallback(() => {
     setGameState("waiting");
     setReactionTime(null);
     
-    // Random delay between 1.5 and 5 seconds
-    const delay = Math.random() * 3500 + 1500;
+    // Use difficulty-specific delay range
+    const config = DIFFICULTY_CONFIGS[difficulty];
+    const delay = Math.random() * (config.maxDelay - config.minDelay) + config.minDelay;
     
     timeoutRef.current = setTimeout(() => {
       startTimeRef.current = performance.now();
       setGameState("ready");
     }, delay);
-  }, []);
+  }, [difficulty]);
 
   // Handle tap/click
   const handleTap = useCallback(() => {
@@ -82,11 +155,12 @@ export function useGameState() {
       const time = Math.round(endTime - (startTimeRef.current || endTime));
       setReactionTime(time);
       
-      // Add to history
+      // Add to history with difficulty
       const newAttempt: GameAttempt = {
         id: crypto.randomUUID(),
         time,
         timestamp: new Date(),
+        difficulty,
       };
       
       setHistory(prev => {
@@ -97,7 +171,7 @@ export function useGameState() {
       
       setGameState("result");
     }
-  }, [gameState]);
+  }, [gameState, difficulty]);
 
   // Reset to idle state
   const reset = useCallback(() => {
@@ -128,8 +202,12 @@ export function useGameState() {
     gameState,
     reactionTime,
     history,
+    filteredHistory,
     averageTime,
     bestTime,
+    difficulty,
+    difficultyConfig,
+    setDifficulty,
     startGame,
     handleTap,
     reset,

@@ -3,15 +3,17 @@
  * - Full-screen immersive game area
  * - Giant reaction time numbers (60% viewport)
  * - Instant state changes, no easing
- * - Neon green target with glow effect
+ * - Difficulty-based target size and colors
  */
 
 import { motion, AnimatePresence } from "framer-motion";
-import type { GameState } from "@/hooks/useGameState";
+import type { GameState, DifficultyConfig, Difficulty } from "@/hooks/useGameState";
 
 interface GameAreaProps {
   gameState: GameState;
   reactionTime: number | null;
+  difficulty: Difficulty;
+  difficultyConfig: DifficultyConfig;
   onTap: () => void;
   onReset: () => void;
   onTryAgain: () => void;
@@ -20,6 +22,8 @@ interface GameAreaProps {
 export function GameArea({
   gameState,
   reactionTime,
+  difficulty,
+  difficultyConfig,
   onTap,
   onReset,
   onTryAgain,
@@ -36,7 +40,9 @@ export function GameArea({
       onClick={handleClick}
       style={{
         background: gameState === "ready" 
-          ? "oklch(0.15 0.1 142)" 
+          ? difficulty === "hard" 
+            ? "oklch(0.15 0.08 25)" 
+            : "oklch(0.15 0.1 142)" 
           : gameState === "early"
           ? "oklch(0.15 0.1 25)"
           : "oklch(0.08 0 0)",
@@ -51,9 +57,26 @@ export function GameArea({
         }}
       />
 
+      {/* Difficulty indicator */}
+      <div className="absolute top-6 right-6 z-20">
+        <span 
+          className="font-display text-lg tracking-wider px-3 py-1 border-2"
+          style={{ 
+            color: difficultyConfig.color,
+            borderColor: difficultyConfig.color,
+          }}
+        >
+          {difficultyConfig.name}
+        </span>
+      </div>
+
       <AnimatePresence mode="wait">
-        {gameState === "waiting" && <WaitingState key="waiting" />}
-        {gameState === "ready" && <ReadyState key="ready" />}
+        {gameState === "waiting" && (
+          <WaitingState key="waiting" difficultyConfig={difficultyConfig} />
+        )}
+        {gameState === "ready" && (
+          <ReadyState key="ready" difficultyConfig={difficultyConfig} />
+        )}
         {gameState === "early" && (
           <EarlyState key="early" onTryAgain={onTryAgain} />
         )}
@@ -61,6 +84,8 @@ export function GameArea({
           <ResultState
             key="result"
             reactionTime={reactionTime}
+            difficulty={difficulty}
+            difficultyConfig={difficultyConfig}
             onTryAgain={onTryAgain}
             onReset={onReset}
           />
@@ -83,7 +108,11 @@ export function GameArea({
   );
 }
 
-function WaitingState() {
+interface WaitingStateProps {
+  difficultyConfig: DifficultyConfig;
+}
+
+function WaitingState({ difficultyConfig }: WaitingStateProps) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -95,15 +124,22 @@ function WaitingState() {
       <div className="font-display text-4xl md:text-6xl text-white/80 tracking-wider">
         WAIT FOR
       </div>
-      <div className="font-display text-6xl md:text-8xl text-primary neon-glow mt-4">
-        GREEN
+      <div 
+        className="font-display text-6xl md:text-8xl mt-4 neon-glow"
+        style={{ color: difficultyConfig.color }}
+      >
+        {difficultyConfig.name === "HARD" ? "RED" : "GREEN"}
       </div>
       <p className="mt-8 text-white/40 text-lg">Don't tap yet...</p>
     </motion.div>
   );
 }
 
-function ReadyState() {
+interface ReadyStateProps {
+  difficultyConfig: DifficultyConfig;
+}
+
+function ReadyState({ difficultyConfig }: ReadyStateProps) {
   return (
     <motion.div
       initial={{ scale: 0 }}
@@ -112,15 +148,24 @@ function ReadyState() {
       transition={{ duration: 0.05, type: "tween" }}
       className="text-center z-10"
     >
-      {/* Target circle */}
+      {/* Target circle - size based on difficulty */}
       <div className="relative">
         <div 
-          className="w-48 h-48 md:w-64 md:h-64 bg-primary animate-target-pulse flex items-center justify-center"
+          className="flex items-center justify-center animate-target-pulse"
           style={{
+            width: `${difficultyConfig.targetSize}px`,
+            height: `${difficultyConfig.targetSize}px`,
+            backgroundColor: difficultyConfig.color,
             clipPath: "circle(50%)",
+            boxShadow: `0 0 20px ${difficultyConfig.color}, 0 0 40px ${difficultyConfig.color}`,
           }}
         >
-          <span className="font-display text-4xl md:text-6xl text-primary-foreground">
+          <span 
+            className="font-display text-primary-foreground"
+            style={{
+              fontSize: `${difficultyConfig.targetSize / 4}px`,
+            }}
+          >
             TAP!
           </span>
         </div>
@@ -130,7 +175,8 @@ function ReadyState() {
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 0.1 }}
-        className="mt-8 text-primary font-display text-2xl tracking-wider"
+        className="mt-8 font-display text-2xl tracking-wider"
+        style={{ color: difficultyConfig.color }}
       >
         NOW!
       </motion.p>
@@ -154,7 +200,7 @@ function EarlyState({ onTryAgain }: EarlyStateProps) {
       <div className="font-display text-6xl md:text-8xl text-destructive tracking-wider">
         TOO EARLY!
       </div>
-      <p className="mt-4 text-white/60 text-lg">Wait for the green target</p>
+      <p className="mt-4 text-white/60 text-lg">Wait for the target to appear</p>
       
       <button
         onClick={(e) => {
@@ -171,12 +217,14 @@ function EarlyState({ onTryAgain }: EarlyStateProps) {
 
 interface ResultStateProps {
   reactionTime: number;
+  difficulty: Difficulty;
+  difficultyConfig: DifficultyConfig;
   onTryAgain: () => void;
   onReset: () => void;
 }
 
-function ResultState({ reactionTime, onTryAgain, onReset }: ResultStateProps) {
-  const rating = getReactionRating(reactionTime);
+function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, onReset }: ResultStateProps) {
+  const rating = getReactionRating(reactionTime, difficulty);
   
   return (
     <motion.div
@@ -192,7 +240,8 @@ function ResultState({ reactionTime, onTryAgain, onReset }: ResultStateProps) {
           initial={{ y: -50, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.2, type: "tween" }}
-          className="font-display text-[clamp(6rem,25vw,16rem)] leading-none text-primary neon-glow"
+          className="font-display text-[clamp(6rem,25vw,16rem)] leading-none neon-glow"
+          style={{ color: difficultyConfig.color }}
         >
           {reactionTime}
         </motion.div>
@@ -201,8 +250,21 @@ function ResultState({ reactionTime, onTryAgain, onReset }: ResultStateProps) {
         </div>
       </div>
 
+      {/* Difficulty badge */}
+      <div className="mt-4">
+        <span 
+          className="font-display text-lg tracking-wider px-3 py-1 border-2"
+          style={{ 
+            color: difficultyConfig.color,
+            borderColor: difficultyConfig.color,
+          }}
+        >
+          {difficultyConfig.name} MODE
+        </span>
+      </div>
+
       {/* Rating */}
-      <div className="mt-8">
+      <div className="mt-6">
         <span 
           className="font-display text-3xl md:text-4xl tracking-wider"
           style={{ color: rating.color }}
@@ -218,7 +280,11 @@ function ResultState({ reactionTime, onTryAgain, onReset }: ResultStateProps) {
             e.stopPropagation();
             onTryAgain();
           }}
-          className="px-12 py-4 bg-primary text-primary-foreground font-display text-2xl tracking-wider hover:bg-transparent hover:text-primary border-2 border-primary transition-colors"
+          className="px-12 py-4 text-primary-foreground font-display text-2xl tracking-wider hover:opacity-90 border-2 transition-colors"
+          style={{
+            backgroundColor: difficultyConfig.color,
+            borderColor: difficultyConfig.color,
+          }}
         >
           TRY AGAIN
         </button>
@@ -236,12 +302,15 @@ function ResultState({ reactionTime, onTryAgain, onReset }: ResultStateProps) {
   );
 }
 
-function getReactionRating(time: number): { label: string; color: string } {
-  if (time < 150) return { label: "INHUMAN!", color: "oklch(0.85 0.3 142)" };
-  if (time < 200) return { label: "LIGHTNING FAST!", color: "oklch(0.85 0.3 142)" };
-  if (time < 250) return { label: "EXCELLENT!", color: "oklch(0.8 0.25 142)" };
-  if (time < 300) return { label: "GREAT!", color: "oklch(0.75 0.2 142)" };
-  if (time < 350) return { label: "GOOD", color: "oklch(0.7 0.15 90)" };
-  if (time < 400) return { label: "AVERAGE", color: "oklch(0.65 0.1 60)" };
+function getReactionRating(time: number, difficulty: Difficulty): { label: string; color: string } {
+  // Adjust thresholds based on difficulty
+  const multiplier = difficulty === "easy" ? 1.2 : difficulty === "hard" ? 0.85 : 1;
+  
+  if (time < 150 * multiplier) return { label: "INHUMAN!", color: "oklch(0.85 0.3 142)" };
+  if (time < 200 * multiplier) return { label: "LIGHTNING FAST!", color: "oklch(0.85 0.3 142)" };
+  if (time < 250 * multiplier) return { label: "EXCELLENT!", color: "oklch(0.8 0.25 142)" };
+  if (time < 300 * multiplier) return { label: "GREAT!", color: "oklch(0.75 0.2 142)" };
+  if (time < 350 * multiplier) return { label: "GOOD", color: "oklch(0.7 0.15 90)" };
+  if (time < 400 * multiplier) return { label: "AVERAGE", color: "oklch(0.65 0.1 60)" };
   return { label: "KEEP PRACTICING", color: "oklch(0.6 0.05 30)" };
 }

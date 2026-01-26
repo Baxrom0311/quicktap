@@ -5,6 +5,7 @@
  * - Neon green (#39FF14) on jet black (#0A0A0A)
  * - Sharp edges, no rounded corners
  * - Instant state transitions
+ * - Difficulty-based gameplay variations
  */
 
 import { useGameState } from "@/hooks/useGameState";
@@ -19,8 +20,12 @@ export default function Home() {
     gameState,
     reactionTime,
     history,
+    filteredHistory,
     averageTime,
     bestTime,
+    difficulty,
+    difficultyConfig,
+    setDifficulty,
     startGame,
     handleTap,
     reset,
@@ -33,6 +38,8 @@ export default function Home() {
       <GameArea
         gameState={gameState}
         reactionTime={reactionTime}
+        difficulty={difficulty}
+        difficultyConfig={difficultyConfig}
         onTap={handleTap}
         onReset={reset}
         onTryAgain={startGame}
@@ -52,8 +59,13 @@ export default function Home() {
           transition={{ duration: 0.2 }}
           className="flex-1 flex flex-col"
         >
-          {/* Start Screen */}
-          <StartScreen onStart={startGame} />
+          {/* Start Screen with Difficulty Selector */}
+          <StartScreen 
+            onStart={startGame}
+            difficulty={difficulty}
+            difficultyConfig={difficultyConfig}
+            onDifficultyChange={setDifficulty}
+          />
 
           {/* History Section */}
           {history.length > 0 && (
@@ -61,8 +73,10 @@ export default function Home() {
               <div className="container max-w-2xl">
                 <HistoryPanel
                   history={history}
+                  filteredHistory={filteredHistory}
                   averageTime={averageTime}
                   bestTime={bestTime}
+                  currentDifficulty={difficulty}
                   onClear={clearHistory}
                 />
               </div>

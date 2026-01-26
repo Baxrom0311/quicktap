@@ -8,12 +8,22 @@
 
 import { motion } from "framer-motion";
 import { Zap, Target, Clock } from "lucide-react";
+import { DifficultySelector } from "./DifficultySelector";
+import type { Difficulty, DifficultyConfig } from "@/hooks/useGameState";
 
 interface StartScreenProps {
   onStart: () => void;
+  difficulty: Difficulty;
+  difficultyConfig: DifficultyConfig;
+  onDifficultyChange: (difficulty: Difficulty) => void;
 }
 
-export function StartScreen({ onStart }: StartScreenProps) {
+export function StartScreen({ 
+  onStart, 
+  difficulty, 
+  difficultyConfig,
+  onDifficultyChange 
+}: StartScreenProps) {
   return (
     <div className="min-h-screen flex flex-col bg-background overflow-hidden">
       {/* Hero Section with diagonal cut */}
@@ -50,7 +60,7 @@ export function StartScreen({ onStart }: StartScreenProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2, duration: 0.3 }}
-          className="relative z-10 mt-12 grid grid-cols-1 md:grid-cols-3 gap-6 max-w-4xl w-full px-4"
+          className="relative z-10 mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl w-full px-4"
         >
           <InstructionCard
             icon={<Clock className="w-8 h-8" />}
@@ -72,6 +82,19 @@ export function StartScreen({ onStart }: StartScreenProps) {
           />
         </motion.div>
 
+        {/* Difficulty Selector */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.3, duration: 0.3 }}
+          className="relative z-10 mt-8 w-full px-4"
+        >
+          <DifficultySelector
+            currentDifficulty={difficulty}
+            onSelect={onDifficultyChange}
+          />
+        </motion.div>
+
         {/* Start Button */}
         <motion.button
           initial={{ opacity: 0, scale: 0.9 }}
@@ -80,9 +103,13 @@ export function StartScreen({ onStart }: StartScreenProps) {
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={onStart}
-          className="relative z-10 mt-12 px-16 py-6 bg-primary text-primary-foreground font-display text-4xl md:text-5xl tracking-wider neon-box-glow border-4 border-primary hover:bg-transparent hover:text-primary transition-colors"
+          className="relative z-10 mt-8 px-16 py-6 bg-primary text-primary-foreground font-display text-4xl md:text-5xl tracking-wider neon-box-glow border-4 border-primary hover:bg-transparent hover:text-primary transition-colors"
+          style={{
+            backgroundColor: difficultyConfig.color,
+            borderColor: difficultyConfig.color,
+          }}
         >
-          START
+          START {difficultyConfig.name}
         </motion.button>
       </div>
 
@@ -106,14 +133,14 @@ interface InstructionCardProps {
 
 function InstructionCard({ icon, step, title, description }: InstructionCardProps) {
   return (
-    <div className="relative bg-black/60 border-2 border-primary/30 p-6 backdrop-blur-sm">
+    <div className="relative bg-black/60 border-2 border-primary/30 p-4 backdrop-blur-sm">
       {/* Step number - positioned at top right */}
-      <span className="absolute top-2 right-4 font-display text-6xl text-primary/20">
+      <span className="absolute top-2 right-4 font-display text-5xl text-primary/20">
         {step}
       </span>
       
-      <div className="text-primary mb-4">{icon}</div>
-      <h3 className="font-display text-2xl text-white mb-2">{title}</h3>
+      <div className="text-primary mb-3">{icon}</div>
+      <h3 className="font-display text-xl text-white mb-1">{title}</h3>
       <p className="text-white/60 text-sm">{description}</p>
     </div>
   );
