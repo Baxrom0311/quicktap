@@ -15,7 +15,7 @@ export interface DifficultyConfig {
 export const DIFFICULTY_CONFIGS: Record<Difficulty, DifficultyConfig> = {
   easy: {
     name: "EASY",
-    description: "Longer delays, bigger target",
+    description: "Uzoqroq kutish, katta nishon",
     minDelay: 2500,
     maxDelay: 6000,
     targetSize: 256,
@@ -23,7 +23,7 @@ export const DIFFICULTY_CONFIGS: Record<Difficulty, DifficultyConfig> = {
   },
   normal: {
     name: "NORMAL",
-    description: "Standard challenge",
+    description: "Standart qiyinlik",
     minDelay: 1500,
     maxDelay: 5000,
     targetSize: 192,
@@ -31,7 +31,7 @@ export const DIFFICULTY_CONFIGS: Record<Difficulty, DifficultyConfig> = {
   },
   hard: {
     name: "HARD",
-    description: "Shorter delays, smaller target",
+    description: "Qisqa kutish, kichik nishon",
     minDelay: 800,
     maxDelay: 3000,
     targetSize: 128,
@@ -100,7 +100,9 @@ export function useGameState() {
   const [reactionTime, setReactionTime] = useState<number | null>(null);
   const [history, setHistory] = useState<GameAttempt[]>(() => loadHistory());
   const [difficulty, setDifficultyState] = useState<Difficulty>(() => loadDifficulty());
-  
+  const [streak, setStreak] = useState(0);
+  const [isNewBest, setIsNewBest] = useState(false);
+
   const startTimeRef = useRef<number | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -129,16 +131,23 @@ export function useGameState() {
   const startGame = useCallback(() => {
     setGameState("waiting");
     setReactionTime(null);
-    
+
     // Use difficulty-specific delay range
     const config = DIFFICULTY_CONFIGS[difficulty];
     const delay = Math.random() * (config.maxDelay - config.minDelay) + config.minDelay;
-    
+
     timeoutRef.current = setTimeout(() => {
       startTimeRef.current = performance.now();
       setGameState("ready");
     }, delay);
   }, [difficulty]);
+
+  // Start immediately (for multiplayer sync)
+  const startImmediate = useCallback(() => {
+    setGameState("ready");
+    setReactionTime(null);
+    startTimeRef.current = performance.now();
+  }, []);
 
   // Handle tap/click
   const handleTap = useCallback(() => {
@@ -149,12 +158,22 @@ export function useGameState() {
         timeoutRef.current = null;
       }
       setGameState("early");
+      setStreak(0); // Reset streak on early tap
     } else if (gameState === "ready") {
       // Calculate reaction time
       const endTime = performance.now();
       const time = Math.round(endTime - (startTimeRef.current || endTime));
       setReactionTime(time);
-      
+
+      // Check if new personal best
+      const currentBest = history
+        .filter(h => h.difficulty === difficulty)
+        .reduce((min, h) => Math.min(min, h.time), Infinity);
+      setIsNewBest(time < currentBest);
+
+      // Update streak
+      setStreak(prev => prev + 1);
+
       // Add to history with difficulty
       const newAttempt: GameAttempt = {
         id: crypto.randomUUID(),
@@ -162,13 +181,13 @@ export function useGameState() {
         timestamp: new Date(),
         difficulty,
       };
-      
+
       setHistory(prev => {
         const updated = [newAttempt, ...prev].slice(0, MAX_HISTORY);
         saveHistory(updated);
         return updated;
       });
-      
+
       setGameState("result");
     }
   }, [gameState, difficulty]);
@@ -207,8 +226,11 @@ export function useGameState() {
     bestTime,
     difficulty,
     difficultyConfig,
+    streak,
+    isNewBest,
     setDifficulty,
     startGame,
+    startImmediate,
     handleTap,
     reset,
     clearHistory,

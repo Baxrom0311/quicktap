@@ -42,7 +42,7 @@ export function useSoundEffects() {
     if (!ctx) return;
 
     const now = ctx.currentTime;
-    
+
     // Main tone
     const osc1 = ctx.createOscillator();
     const gain1 = ctx.createGain();
@@ -216,6 +216,91 @@ export function useSoundEffects() {
     osc.stop(now + 0.03);
   }, [isMuted, initAudioContext]);
 
+  // Countdown tick sound - ascending pitch for 3-2-1-GO
+  const playCountdownTick = useCallback((step: number) => {
+    if (isMuted) return;
+    const ctx = initAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    // step: 3=low, 2=mid, 1=high, 0=GO (highest)
+    const freqs = [440, 554, 659, 880];
+    const freq = freqs[Math.min(3 - step, 3)] || 880;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = step === 0 ? "square" : "sine";
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(step === 0 ? 0.3 : 0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + (step === 0 ? 0.2 : 0.12));
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + (step === 0 ? 0.2 : 0.12));
+  }, [isMuted, initAudioContext]);
+
+  // Win sound - triumphant rising chord
+  const playWin = useCallback(() => {
+    if (isMuted) return;
+    const ctx = initAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    const notes = [
+      { freq: 523.25, time: 0, dur: 0.15 },    // C5
+      { freq: 659.25, time: 0.1, dur: 0.15 },   // E5
+      { freq: 783.99, time: 0.2, dur: 0.15 },   // G5
+      { freq: 1046.5, time: 0.3, dur: 0.3 },    // C6
+      { freq: 1318.5, time: 0.35, dur: 0.4 },   // E6 (harmony)
+    ];
+
+    notes.forEach(({ freq, time, dur }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + time);
+      gain.gain.setValueAtTime(0.2, now + time);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + time + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + time);
+      osc.stop(now + time + dur);
+    });
+  }, [isMuted, initAudioContext]);
+
+  // Lose sound - descending sad tone
+  const playLose = useCallback(() => {
+    if (isMuted) return;
+    const ctx = initAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+
+    const osc1 = ctx.createOscillator();
+    const gain1 = ctx.createGain();
+    osc1.type = "sine";
+    osc1.frequency.setValueAtTime(440, now);      // A4
+    osc1.frequency.exponentialRampToValueAtTime(220, now + 0.3); // A3 (drop)
+    gain1.gain.setValueAtTime(0.2, now);
+    gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+    osc1.connect(gain1);
+    gain1.connect(ctx.destination);
+    osc1.start(now);
+    osc1.stop(now + 0.4);
+
+    const osc2 = ctx.createOscillator();
+    const gain2 = ctx.createGain();
+    osc2.type = "sine";
+    osc2.frequency.setValueAtTime(349, now + 0.15); // F4
+    osc2.frequency.exponentialRampToValueAtTime(175, now + 0.45);
+    gain2.gain.setValueAtTime(0.15, now + 0.15);
+    gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    osc2.connect(gain2);
+    gain2.connect(ctx.destination);
+    osc2.start(now + 0.15);
+    osc2.stop(now + 0.5);
+  }, [isMuted, initAudioContext]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -231,6 +316,9 @@ export function useSoundEffects() {
     playTargetAppear,
     playExcellent,
     playClick,
+    playCountdownTick,
+    playWin,
+    playLose,
     isMuted,
     toggleMute,
     initAudioContext,

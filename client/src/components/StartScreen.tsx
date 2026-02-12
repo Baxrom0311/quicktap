@@ -23,9 +23,9 @@ interface StartScreenProps {
   toggleMute: () => void;
 }
 
-export function StartScreen({ 
-  onStart, 
-  difficulty, 
+export function StartScreen({
+  onStart,
+  difficulty,
   difficultyConfig,
   onDifficultyChange,
   isMuted,
@@ -38,23 +38,21 @@ export function StartScreen({
       // Only if not focused on a button or interactive element
       const activeElement = document.activeElement;
       const isButton = activeElement?.tagName === "BUTTON";
-      
+
       if (!isButton) {
         event.preventDefault();
         onStart();
       }
     }
-    
+
     // Number keys 1-3 to select difficulty
     if (event.code === "Digit1" || event.code === "Numpad1") {
       event.preventDefault();
       onDifficultyChange("easy");
-    }
-    if (event.code === "Digit2" || event.code === "Numpad2") {
+    } else if (event.code === "Digit2" || event.code === "Numpad2") {
       event.preventDefault();
       onDifficultyChange("normal");
-    }
-    if (event.code === "Digit3" || event.code === "Numpad3") {
+    } else if (event.code === "Digit3" || event.code === "Numpad3") {
       event.preventDefault();
       onDifficultyChange("hard");
     }
@@ -77,7 +75,7 @@ export function StartScreen({
   return (
     <div className="min-h-screen flex flex-col bg-background overflow-hidden">
       {/* Hero Section with diagonal cut */}
-      <div 
+      <div
         className="relative flex-1 flex flex-col items-center justify-center px-4 py-12"
         style={{
           backgroundImage: "url('/images/hero-bg.png')",
@@ -92,11 +90,11 @@ export function StartScreen({
         <button
           onClick={toggleMute}
           className="absolute top-6 right-6 z-20 p-2 text-white/50 hover:text-white transition-colors"
-          title={isMuted ? "Unmute [M]" : "Mute [M]"}
+          title={isMuted ? "Ovozni yoqish [M]" : "Ovozni o'chirish [M]"}
         >
           {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
         </button>
-        
+
         <motion.div
           initial={{ opacity: 0, y: -50 }}
           animate={{ opacity: 1, y: 0 }}
@@ -108,9 +106,9 @@ export function StartScreen({
             QUICK
             <span className="text-primary neon-glow">TAP</span>
           </h1>
-          
+
           <p className="mt-4 text-lg md:text-xl text-white/80 font-medium tracking-wide uppercase">
-            Test Your Reaction Speed
+            Reaktsiya Tezligingizni Sinab Ko'ring
           </p>
         </motion.div>
 
@@ -124,20 +122,20 @@ export function StartScreen({
           <InstructionCard
             icon={<Clock className="w-8 h-8" />}
             step="01"
-            title="WAIT"
-            description="Watch for the green target to appear"
+            title="KUTISH"
+            description="Yashil nishon paydo bo'lishini kuting"
           />
           <InstructionCard
             icon={<Target className="w-8 h-8" />}
             step="02"
-            title="TAP"
-            description="Click, tap, or press Space/Enter"
+            title="BOSING"
+            description="Bosing yoki Space/Enter tugmalarini bosing"
           />
           <InstructionCard
             icon={<Zap className="w-8 h-8" />}
             step="03"
-            title="IMPROVE"
-            description="Track your times and beat your best"
+            title="YAXSHILANG"
+            description="Vaqtlaringizni kuzatib, rekordingizni yangilang"
           />
         </motion.div>
 
@@ -168,7 +166,7 @@ export function StartScreen({
             borderColor: difficultyConfig.color,
           }}
         >
-          START {difficultyConfig.name}
+          BOSHLASH {difficultyConfig.name}
         </motion.button>
 
         {/* Keyboard hints */}
@@ -183,11 +181,11 @@ export function StartScreen({
               <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
                 SPACE
               </kbd>
-              <span>or</span>
+              <span>yoki</span>
               <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
                 ENTER
               </kbd>
-              <span>to start</span>
+              <span>boshlash uchun</span>
             </div>
             <span className="hidden sm:inline">•</span>
             <div className="flex items-center gap-2">
@@ -200,21 +198,21 @@ export function StartScreen({
               <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
                 3
               </kbd>
-              <span>difficulty</span>
+              <span>qiyinlik</span>
             </div>
             <span className="hidden sm:inline">•</span>
             <div className="flex items-center gap-2">
               <kbd className="px-2 py-1 bg-white/10 border border-white/20 font-display text-xs">
                 M
               </kbd>
-              <span>mute</span>
+              <span>ovozni o'chirish</span>
             </div>
           </div>
         </motion.div>
       </div>
 
       {/* Diagonal stripe divider */}
-      <div 
+      <div
         className="h-8 w-full"
         style={{
           background: "repeating-linear-gradient(135deg, transparent, transparent 10px, oklch(0.85 0.3 142 / 0.3) 10px, oklch(0.85 0.3 142 / 0.3) 20px)",
@@ -238,7 +236,7 @@ function InstructionCard({ icon, step, title, description }: InstructionCardProp
       <span className="absolute top-2 right-4 font-display text-5xl text-primary/20">
         {step}
       </span>
-      
+
       <div className="text-primary mb-3">{icon}</div>
       <h3 className="font-display text-xl text-white mb-1">{title}</h3>
       <p className="text-white/60 text-sm">{description}</p>
