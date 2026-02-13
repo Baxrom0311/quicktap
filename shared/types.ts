@@ -68,3 +68,11 @@ export interface SubmitScoreResponse {
     id: string;
     created_at: string;
 }
+
+export interface LoginRequest {
+    userId: string;
+}
+
+export interface LoginResponse {
+    accessToken: string;
+}

@@ -3,21 +3,60 @@ import type {
     RankResponse,
     SubmitScoreRequest,
     SubmitScoreResponse,
+    LoginRequest,
+    LoginResponse,
 } from '@shared/types';
 
 const API_URL =
     import.meta.env.VITE_API_URL ||
     (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
 
-// Submit a score to the leaderboard
-export async function submitScore(
-    request: SubmitScoreRequest
-): Promise<SubmitScoreResponse> {
-    const response = await fetch(`${API_URL}/api/scores`, {
+// Token management
+let accessToken: string | null = localStorage.getItem('quicktap_token');
+
+export function setToken(token: string) {
+    accessToken = token;
+    localStorage.setItem('quicktap_token', token);
+}
+
+export function getToken(): string | null {
+    return accessToken;
+}
+
+// Login to get token
+export async function login(userId: string): Promise<LoginResponse> {
+    const response = await fetch(`${API_URL}/api/auth/login`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
         },
+        body: JSON.stringify({ userId }),
+    });
+
+    if (!response.ok) {
+        throw new Error('Login failed');
+    }
+
+    const data: LoginResponse = await response.json();
+    setToken(data.accessToken);
+    return data;
+}
+
+// Submit a score to the leaderboard
+export async function submitScore(
+    request: SubmitScoreRequest
+): Promise<SubmitScoreResponse> {
+    const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+    };
+
+    if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    const response = await fetch(`${API_URL}/api/scores`, {
+        method: 'POST',
+        headers,
         body: JSON.stringify(request),
     });
 

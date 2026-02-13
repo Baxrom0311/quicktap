@@ -1,12 +1,14 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { UserProfile } from '@shared/types';
 import type { Difficulty } from '@/hooks/useGameState';
+import { login, getUserRank } from '@/lib/api';
 
 interface UserContextType {
     user: UserProfile | null;
     setUser: (user: UserProfile) => void;
     updateStats: (difficulty: Difficulty, score: number) => void;
     hasProfile: boolean;
+    syncStats: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -36,9 +38,56 @@ function saveUserProfile(user: UserProfile) {
 export function UserProvider({ children }: { children: React.ReactNode }) {
     const [user, setUserState] = useState<UserProfile | null>(() => loadUserProfile());
 
+    // Login when user is set or loaded
+    useEffect(() => {
+        if (user?.userId) {
+            login(user.userId)
+                .then(() => {
+                    console.log('Logged in successfully');
+                    syncStats();
+                })
+                .catch(err => console.error('Login failed:', err));
+        }
+    }, [user?.userId]);
+
     const setUser = (newUser: UserProfile) => {
         setUserState(newUser);
         saveUserProfile(newUser);
+    };
+
+    const syncStats = async () => {
+        if (!user) return;
+        try {
+            const difficulties: Difficulty[] = ['easy', 'normal', 'hard'];
+            const updates: Partial<UserProfile['stats']> = {};
+
+            for (const diff of difficulties) {
+                const { best_score } = await getUserRank(user.userId, diff);
+                if (best_score !== null) {
+                    updates[diff] = {
+                        ...user.stats[diff],
+                        bestScore: best_score
+                    };
+                } else {
+                    updates[diff] = user.stats[diff];
+                }
+            }
+
+            const updatedUser = {
+                ...user,
+                stats: {
+                    ...user.stats,
+                    ...updates
+                }
+            };
+
+            // Only update if changed to avoid loops
+            if (JSON.stringify(updatedUser) !== JSON.stringify(user)) {
+                setUser(updatedUser);
+            }
+        } catch (error) {
+            console.error('Failed to sync stats:', error);
+        }
     };
 
     const updateStats = (difficulty: Difficulty, score: number) => {
@@ -68,6 +117,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
                 setUser,
                 updateStats,
                 hasProfile: user !== null,
+                syncStats,
             }}
         >
             {children}

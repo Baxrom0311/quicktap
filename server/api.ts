@@ -7,6 +7,8 @@ import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
@@ -25,10 +27,24 @@ const pool = new Pool({
 });
 
 // Middleware
+app.use(helmet());
+
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || '*',
-    methods: ['GET', 'POST']
+    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    methods: ['GET', 'POST'],
+    credentials: true
 }));
+
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100, // Limit each IP to 100 requests per windowMs
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Apply rate limiting to all requests
+app.use(limiter);
+
 app.use(express.json());
 
 // Health check
@@ -36,15 +52,59 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// POST /api/scores - Submit a new score
-app.post('/api/scores', async (req, res) => {
+import jwt from 'jsonwebtoken';
+
+// ... (imports remain the same)
+
+// JWT Secret
+const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_12345';
+
+// ... (middleware setup remains the same)
+
+// Auth Middleware
+const authenticateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) return res.sendStatus(401);
+
+    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
+        if (err) return res.sendStatus(403);
+        (req as any).user = user;
+        next();
+    });
+};
+
+// POST /api/auth/login - Get a token
+app.post('/api/auth/login', (req, res) => {
+    const { userId } = req.body;
+    if (!userId) {
+        return res.status(400).json({ error: 'UserID required' });
+    }
+    // In a real app, we would verify a password here.
+    // For this game, we are trusting the client provided userId but signing it
+    // so that only our server can generate valid tokens for score submission.
+    // This prevents random people from "curling" scores without at least running the client logic once.
+
+    const user = { userId };
+    const accessToken = jwt.sign(user, JWT_SECRET, { expiresIn: '24h' });
+    res.json({ accessToken });
+});
+
+// POST /api/scores - Submit a new score (PROTECTED)
+app.post('/api/scores', authenticateToken, async (req: any, res: any) => {
     try {
         const { user_id, username, avatar, score, difficulty } = req.body;
+
+        // Verify that the token matches the submitted score's user_id
+        if (req.user.userId !== user_id) {
+            return res.status(403).json({ error: 'Token mismatch' });
+        }
 
         // Validation
         if (
             typeof user_id !== 'string' ||
-            typeof username !== 'string' ||
+            // ... rest of validation and logic            typeof username !== 'string' ||
             typeof avatar !== 'string' ||
             typeof score !== 'number' ||
             typeof difficulty !== 'string'
