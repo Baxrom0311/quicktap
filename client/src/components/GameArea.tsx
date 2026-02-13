@@ -100,8 +100,17 @@ export function GameArea({
   // Keyboard event handler
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
     // Ignore hotkeys when user is typing in input/textarea fields
-    const target = event.target as HTMLElement;
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+    const target = document.activeElement as HTMLElement;
+    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+    if (isInput) {
+      // Allow default behavior for inputs (typing, removing focus on Escape maybe?)
+      // Actually, let's just return and let browser handle it.
+      // Exception: If we want Escape to blur input? 
+      if (event.code === "Escape") {
+        target.blur();
+        return;
+      }
       return;
     }
 

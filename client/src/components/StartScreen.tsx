@@ -33,11 +33,18 @@ export function StartScreen({
 }: StartScreenProps) {
   // Keyboard event handler for start screen
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    // Ignore hotkeys when user is typing in input/textarea fields
+    const target = document.activeElement as HTMLElement;
+    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+    if (isInput) {
+      return;
+    }
+
     // Enter or Space to start the game
     if (event.code === "Enter" || event.code === "Space") {
-      // Only if not focused on a button or interactive element
-      const activeElement = document.activeElement;
-      const isButton = activeElement?.tagName === "BUTTON";
+      // Only if not focused on a button or interactive element (though button usually handles click on Enter)
+      const isButton = target.tagName === "BUTTON";
 
       if (!isButton) {
         event.preventDefault();
