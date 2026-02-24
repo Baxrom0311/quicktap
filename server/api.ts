@@ -9,6 +9,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import jwt from 'jsonwebtoken';
 
 dotenv.config();
 
@@ -26,11 +27,14 @@ const pool = new Pool({
     port: parseInt(process.env.DB_PORT || '5432'),
 });
 
+// CORS origin (shared between Express and Socket.io)
+const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+
 // Middleware
 app.use(helmet());
 
 app.use(cors({
-    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    origin: corsOrigin,
     methods: ['GET', 'POST'],
     credentials: true
 }));
@@ -47,19 +51,47 @@ app.use(limiter);
 
 app.use(express.json());
 
-// Health check
-app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+// Structured logging helper
+function log(level: 'info' | 'warn' | 'error', message: string, meta?: Record<string, any>) {
+    const entry = {
+        timestamp: new Date().toISOString(),
+        level,
+        message,
+        ...(meta || {}),
+    };
+    if (level === 'error') console.error(JSON.stringify(entry));
+    else if (level === 'warn') console.warn(JSON.stringify(entry));
+    else console.log(JSON.stringify(entry));
+}
+
+// Health check (with DB ping)
+app.get('/api/health', async (_req, res) => {
+    try {
+        const dbResult = await pool.query('SELECT NOW()');
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            db: { connected: true, time: dbResult.rows[0].now },
+            uptime: process.uptime(),
+        });
+    } catch (err) {
+        log('error', 'Health check DB ping failed', { error: String(err) });
+        res.status(503).json({
+            status: 'degraded',
+            timestamp: new Date().toISOString(),
+            db: { connected: false },
+        });
+    }
 });
-
-import jwt from 'jsonwebtoken';
-
-// ... (imports remain the same)
 
 // JWT Secret
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret_key_12345';
-
-// ... (middleware setup remains the same)
+if (!process.env.JWT_SECRET) {
+    console.warn('[security] JWT_SECRET is not set; using development fallback secret.');
+}
+if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'dev_secret_key_12345') {
+    throw new Error('JWT_SECRET must be set in production.');
+}
 
 // Auth Middleware
 const authenticateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -78,8 +110,11 @@ const authenticateToken = (req: express.Request, res: express.Response, next: ex
 // POST /api/auth/login - Get a token
 app.post('/api/auth/login', (req, res) => {
     const { userId } = req.body;
-    if (!userId) {
-        return res.status(400).json({ error: 'UserID required' });
+    if (typeof userId !== 'string') {
+        return res.status(400).json({ error: 'UserID must be a string' });
+    }
+    if (userId.length < 8 || userId.length > 128) {
+        return res.status(400).json({ error: 'Invalid UserID length' });
     }
     // In a real app, we would verify a password here.
     // For this game, we are trusting the client provided userId but signing it
@@ -96,20 +131,20 @@ app.post('/api/scores', authenticateToken, async (req: any, res: any) => {
     try {
         const { user_id, username, avatar, score, difficulty } = req.body;
 
-        // Verify that the token matches the submitted score's user_id
-        if (req.user.userId !== user_id) {
-            return res.status(403).json({ error: 'Token mismatch' });
-        }
-
         // Validation
         if (
             typeof user_id !== 'string' ||
-            // ... rest of validation and logic            typeof username !== 'string' ||
+            typeof username !== 'string' ||
             typeof avatar !== 'string' ||
             typeof score !== 'number' ||
             typeof difficulty !== 'string'
         ) {
-            return res.status(400).json({ error: 'Missing required fields' });
+            return res.status(400).json({ error: 'Invalid payload' });
+        }
+
+        // Verify that the token matches the submitted score's user_id
+        if (req.user?.userId !== user_id) {
+            return res.status(403).json({ error: 'Token mismatch' });
         }
 
         if (!['easy', 'normal', 'hard'].includes(difficulty)) {
@@ -160,16 +195,31 @@ app.post('/api/scores', authenticateToken, async (req: any, res: any) => {
 });
 
 // GET /api/leaderboard/:difficulty - Get top scores
+// Query params: limit (1-100), offset (0+), period (today|week|month|all)
 app.get('/api/leaderboard/:difficulty', async (req, res) => {
     try {
         const { difficulty } = req.params;
-        const parsedLimit = Number.parseInt(String(req.query.limit ?? '100'), 10);
+        const parsedLimit = Number.parseInt(String(req.query.limit ?? '50'), 10);
         const limit = Number.isFinite(parsedLimit)
             ? Math.min(Math.max(parsedLimit, 1), 100)
-            : 100;
+            : 50;
+        const parsedOffset = Number.parseInt(String(req.query.offset ?? '0'), 10);
+        const offset = Number.isFinite(parsedOffset) ? Math.max(parsedOffset, 0) : 0;
+        const period = String(req.query.period || 'all');
 
         if (!['easy', 'normal', 'hard'].includes(difficulty)) {
             return res.status(400).json({ error: 'Invalid difficulty' });
+        }
+
+        // Build time filter
+        let timeFilter = '';
+        const params: any[] = [difficulty];
+        if (period === 'today') {
+            timeFilter = `AND created_at >= NOW() - INTERVAL '1 day'`;
+        } else if (period === 'week') {
+            timeFilter = `AND created_at >= NOW() - INTERVAL '7 days'`;
+        } else if (period === 'month') {
+            timeFilter = `AND created_at >= NOW() - INTERVAL '30 days'`;
         }
 
         // Get top scores for each user (best score per user)
@@ -188,17 +238,31 @@ app.get('/api/leaderboard/:difficulty', async (req, res) => {
              ORDER BY score ASC, created_at ASC
            ) AS rn
          FROM leaderboard
-         WHERE difficulty = $1
+         WHERE difficulty = $1 ${timeFilter}
        ) ranked
        WHERE rn = 1
        ORDER BY score ASC, created_at ASC
-       LIMIT $2`,
-            [difficulty, limit]
+       LIMIT $2 OFFSET $3`,
+            [difficulty, limit, offset]
         );
 
-        res.json({ leaderboard: result.rows });
+        // Also return total count for pagination
+        const countResult = await pool.query(
+            `SELECT COUNT(DISTINCT user_id) as total
+       FROM leaderboard
+       WHERE difficulty = $1 ${timeFilter}`,
+            [difficulty]
+        );
+
+        res.json({
+            leaderboard: result.rows,
+            total: parseInt(countResult.rows[0].total),
+            limit,
+            offset,
+            period,
+        });
     } catch (error) {
-        console.error('Error fetching leaderboard:', error);
+        log('error', 'Error fetching leaderboard', { error: String(error) });
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -253,8 +317,8 @@ app.get('/api/user/:userId/rank/:difficulty', async (req, res) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: process.env.CORS_ORIGIN || "*",
-        methods: ["GET", "POST"]
+        origin: corsOrigin,
+        methods: ['GET', 'POST']
     }
 });
 
@@ -274,7 +338,25 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 httpServer.listen(port, () => {
-    console.log(`🚀 QuickTap API server running on port ${port}`);
+    log('info', `QuickTap API server running on port ${port}`, { port, env: process.env.NODE_ENV });
 });
+
+// Graceful shutdown
+const shutdown = async (signal: string) => {
+    log('info', `Received ${signal}, shutting down gracefully...`);
+    httpServer.close(() => {
+        log('info', 'HTTP server closed');
+    });
+    try {
+        await pool.end();
+        log('info', 'Database pool closed');
+    } catch (err) {
+        log('error', 'Error closing DB pool', { error: String(err) });
+    }
+    process.exit(0);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 export default app;

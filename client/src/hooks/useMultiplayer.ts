@@ -46,6 +46,7 @@ export function useMultiplayer(user: UserProfile | null) {
         setOpponent(null);
         setSocket(null);
         setCurrentRound(1);
+        setTotalRounds(3);
         setRoundWinners([]);
     }, [user]);
 
@@ -90,12 +91,18 @@ export function useMultiplayer(user: UserProfile | null) {
         });
 
         newSocket.on('round_over', (data: { roundNumber: number; roundWinnerId: string; roundWinners: string[]; scores: { userId: string; score: number }[] }) => {
+            setStatus('countdown');
             setRoundWinners(data.roundWinners);
+            setCurrentRound(data.roundNumber + 1);
             // Show toast for round result
             const isMyWin = data.roundWinnerId === user?.userId;
             toast(isMyWin ? `🏆 Raund ${data.roundNumber} - Siz yutdingiz!` : `💔 Raund ${data.roundNumber} - Raqib yutdi`, {
                 duration: 2500,
             });
+        });
+
+        newSocket.on('error_message', (message: string) => {
+            toast.error(message || "Server xatoligi");
         });
 
         newSocket.on('opponent_score', ({ userId, score }: { userId: string, score: number }) => {
@@ -216,6 +223,9 @@ export function useMultiplayer(user: UserProfile | null) {
         setStatus('idle');
         setRoom(null);
         setOpponent(null);
+        setCurrentRound(1);
+        setTotalRounds(3);
+        setRoundWinners([]);
     }, [socket]);
 
     return {

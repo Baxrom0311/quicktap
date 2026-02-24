@@ -1,17 +1,17 @@
-// Avatar options - Kahoot-style character avatars
+// Avatar options - Emoji-based character avatars
 export const AVATAR_OPTIONS = [
-    { id: 'monster', name: 'Monster', url: '/avatars/monster.png', color: '#FF4444' },
-    { id: 'robot', name: 'Robot', url: '/avatars/robot.png', color: '#00D4FF' },
-    { id: 'alien', name: 'Alien', url: '/avatars/alien.png', color: '#39FF14' },
-    { id: 'cat', name: 'Cat', url: '/avatars/cat.png', color: '#FF9500' },
-    { id: 'bear', name: 'Bear', url: '/avatars/bear.png', color: '#9D4FFF' },
-    { id: 'fox', name: 'Fox', url: '/avatars/fox.png', color: '#FFD700' },
-    { id: 'panda', name: 'Panda', url: '/avatars/panda.png', color: '#00CED1' },
-    { id: 'unicorn', name: 'Unicorn', url: '/avatars/unicorn.png', color: '#FF1493' },
-    { id: 'rocket', name: 'Rocket', url: '/avatars/rocket.png', color: '#1E3A8A' },
-    { id: 'star', name: 'Star', url: '/avatars/star.png', color: '#FFD700' },
-    { id: 'lightning', name: 'Lightning', url: '/avatars/lightning.png', color: '#00FFFF' },
-    { id: 'trophy', name: 'Trophy', url: '/avatars/trophy.png', color: '#FFB800' },
+    { id: 'monster', name: 'Monster', emoji: '👾', color: '#FF4444' },
+    { id: 'robot', name: 'Robot', emoji: '🤖', color: '#00D4FF' },
+    { id: 'alien', name: 'Alien', emoji: '👽', color: '#39FF14' },
+    { id: 'cat', name: 'Cat', emoji: '🐱', color: '#FF9500' },
+    { id: 'bear', name: 'Bear', emoji: '🐻', color: '#9D4FFF' },
+    { id: 'fox', name: 'Fox', emoji: '🦊', color: '#FFD700' },
+    { id: 'panda', name: 'Panda', emoji: '🐼', color: '#00CED1' },
+    { id: 'unicorn', name: 'Unicorn', emoji: '🦄', color: '#FF1493' },
+    { id: 'rocket', name: 'Rocket', emoji: '🚀', color: '#1E3A8A' },
+    { id: 'star', name: 'Star', emoji: '⭐', color: '#FFD700' },
+    { id: 'lightning', name: 'Lightning', emoji: '⚡', color: '#00FFFF' },
+    { id: 'trophy', name: 'Trophy', emoji: '🏆', color: '#FFB800' },
 ] as const;
 
 export type AvatarId = typeof AVATAR_OPTIONS[number]['id'];
@@ -48,6 +48,10 @@ export interface LeaderboardEntry {
 // API response types
 export interface LeaderboardResponse {
     leaderboard: LeaderboardEntry[];
+    total?: number;
+    limit?: number;
+    offset?: number;
+    period?: string;
 }
 
 export interface RankResponse {

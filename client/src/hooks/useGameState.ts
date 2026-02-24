@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 
-export type GameState = "idle" | "waiting" | "ready" | "result" | "early";
+export type GameState = "idle" | "waiting" | "ready" | "result" | "early" | "round_summary" | "final_result";
 export type Difficulty = "easy" | "normal" | "hard";
+export type GameMode = "classic" | "genius";
 
 export interface DifficultyConfig {
   name: string;
@@ -39,6 +40,8 @@ export const DIFFICULTY_CONFIGS: Record<Difficulty, DifficultyConfig> = {
   },
 };
 
+export const GENIUS_ROUNDS = 5;
+
 export interface GameAttempt {
   id: string;
   time: number;
@@ -48,7 +51,8 @@ export interface GameAttempt {
 
 const STORAGE_KEY = "quicktap_history";
 const DIFFICULTY_KEY = "quicktap_difficulty";
-const MAX_HISTORY = 10;
+const MODE_KEY = "quicktap_mode";
+const MAX_HISTORY = 50;
 
 function loadHistory(): GameAttempt[] {
   try {
@@ -58,7 +62,7 @@ function loadHistory(): GameAttempt[] {
       return parsed.map((item: any) => ({
         ...item,
         timestamp: new Date(item.timestamp),
-        difficulty: item.difficulty || "normal", // Default for old entries
+        difficulty: item.difficulty || "normal",
       }));
     }
   } catch (e) {
@@ -95,18 +99,42 @@ function saveDifficulty(difficulty: Difficulty) {
   }
 }
 
+function loadGameMode(): GameMode {
+  try {
+    const stored = localStorage.getItem(MODE_KEY);
+    if (stored === "classic" || stored === "genius") return stored;
+  } catch {
+    // ignore
+  }
+  return "classic";
+}
+
+function saveGameMode(mode: GameMode) {
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    // ignore
+  }
+}
+
 export function useGameState() {
   const [gameState, setGameState] = useState<GameState>("idle");
   const [reactionTime, setReactionTime] = useState<number | null>(null);
   const [history, setHistory] = useState<GameAttempt[]>(() => loadHistory());
   const [difficulty, setDifficultyState] = useState<Difficulty>(() => loadDifficulty());
+  const [gameMode, setGameModeState] = useState<GameMode>(() => loadGameMode());
   const [streak, setStreak] = useState(0);
   const [isNewBest, setIsNewBest] = useState(false);
+
+  // Multi-round state
+  const [currentRound, setCurrentRound] = useState(1);
+  const [roundResults, setRoundResults] = useState<number[]>([]);
 
   const startTimeRef = useRef<number | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const difficultyConfig = DIFFICULTY_CONFIGS[difficulty];
+  const totalRounds = gameMode === "genius" ? GENIUS_ROUNDS : 1;
 
   // Filter history by current difficulty for stats
   const filteredHistory = history.filter(h => h.difficulty === difficulty);
@@ -121,18 +149,32 @@ export function useGameState() {
     ? Math.min(...filteredHistory.map(h => h.time))
     : null;
 
+  // Multi-round computed values
+  const roundAverage = roundResults.length > 0
+    ? Math.round(roundResults.reduce((sum, t) => sum + t, 0) / roundResults.length)
+    : null;
+
+  const roundBest = roundResults.length > 0
+    ? Math.min(...roundResults)
+    : null;
+
   // Set difficulty with persistence
   const setDifficulty = useCallback((newDifficulty: Difficulty) => {
     setDifficultyState(newDifficulty);
     saveDifficulty(newDifficulty);
   }, []);
 
-  // Start the game - begin waiting phase
-  const startGame = useCallback(() => {
+  // Set game mode with persistence
+  const setGameMode = useCallback((newMode: GameMode) => {
+    setGameModeState(newMode);
+    saveGameMode(newMode);
+  }, []);
+
+  // Start a single round (internal)
+  const startRound = useCallback(() => {
     setGameState("waiting");
     setReactionTime(null);
 
-    // Use difficulty-specific delay range
     const config = DIFFICULTY_CONFIGS[difficulty];
     const delay = Math.random() * (config.maxDelay - config.minDelay) + config.minDelay;
 
@@ -142,12 +184,26 @@ export function useGameState() {
     }, delay);
   }, [difficulty]);
 
+  // Start the game
+  const startGame = useCallback(() => {
+    setCurrentRound(1);
+    setRoundResults([]);
+    setIsNewBest(false);
+    startRound();
+  }, [startRound]);
+
   // Start immediately (for multiplayer sync)
   const startImmediate = useCallback(() => {
     setGameState("ready");
     setReactionTime(null);
     startTimeRef.current = performance.now();
   }, []);
+
+  // Proceed to next round (genius mode)
+  const nextRound = useCallback(() => {
+    setCurrentRound(prev => prev + 1);
+    startRound();
+  }, [startRound]);
 
   // Handle tap/click
   const handleTap = useCallback(() => {
@@ -158,7 +214,7 @@ export function useGameState() {
         timeoutRef.current = null;
       }
       setGameState("early");
-      setStreak(0); // Reset streak on early tap
+      setStreak(0);
     } else if (gameState === "ready") {
       // Calculate reaction time
       const endTime = performance.now();
@@ -174,23 +230,53 @@ export function useGameState() {
       // Update streak
       setStreak(prev => prev + 1);
 
-      // Add to history with difficulty
-      const newAttempt: GameAttempt = {
-        id: crypto.randomUUID(),
-        time,
-        timestamp: new Date(),
-        difficulty,
-      };
+      if (gameMode === "genius") {
+        // Multi-round: save round result
+        const newRoundResults = [...roundResults, time];
+        setRoundResults(newRoundResults);
 
-      setHistory(prev => {
-        const updated = [newAttempt, ...prev].slice(0, MAX_HISTORY);
-        saveHistory(updated);
-        return updated;
-      });
+        if (newRoundResults.length >= GENIUS_ROUNDS) {
+          // All rounds done — save average to history and show final result
+          const avg = Math.round(newRoundResults.reduce((s, t) => s + t, 0) / newRoundResults.length);
 
-      setGameState("result");
+          const newAttempt: GameAttempt = {
+            id: crypto.randomUUID(),
+            time: avg,
+            timestamp: new Date(),
+            difficulty,
+          };
+
+          setHistory(prev => {
+            const updated = [newAttempt, ...prev].slice(0, MAX_HISTORY);
+            saveHistory(updated);
+            return updated;
+          });
+
+          setReactionTime(avg);
+          setGameState("final_result");
+        } else {
+          // More rounds to go — show round summary briefly
+          setGameState("round_summary");
+        }
+      } else {
+        // Classic mode: single round, save immediately
+        const newAttempt: GameAttempt = {
+          id: crypto.randomUUID(),
+          time,
+          timestamp: new Date(),
+          difficulty,
+        };
+
+        setHistory(prev => {
+          const updated = [newAttempt, ...prev].slice(0, MAX_HISTORY);
+          saveHistory(updated);
+          return updated;
+        });
+
+        setGameState("result");
+      }
     }
-  }, [gameState, difficulty]);
+  }, [gameState, difficulty, gameMode, roundResults, history]);
 
   // Reset to idle state
   const reset = useCallback(() => {
@@ -200,6 +286,8 @@ export function useGameState() {
     }
     setGameState("idle");
     setReactionTime(null);
+    setCurrentRound(1);
+    setRoundResults([]);
   }, []);
 
   // Clear history
@@ -228,6 +316,17 @@ export function useGameState() {
     difficultyConfig,
     streak,
     isNewBest,
+    // Game mode
+    gameMode,
+    setGameMode,
+    // Multi-round
+    currentRound,
+    totalRounds,
+    roundResults,
+    roundAverage,
+    roundBest,
+    nextRound,
+    // Actions
     setDifficulty,
     startGame,
     startImmediate,

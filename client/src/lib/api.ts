@@ -69,12 +69,21 @@ export async function submitScore(
 }
 
 // Get leaderboard for a difficulty
+export type LeaderboardPeriod = 'all' | 'today' | 'week' | 'month';
+
 export async function getLeaderboard(
     difficulty: 'easy' | 'normal' | 'hard',
-    limit: number = 100
+    limit: number = 50,
+    period: LeaderboardPeriod = 'all',
+    offset: number = 0,
 ): Promise<LeaderboardResponse> {
+    const params = new URLSearchParams({
+        limit: String(limit),
+        period,
+        offset: String(offset),
+    });
     const response = await fetch(
-        `${API_URL}/api/leaderboard/${difficulty}?limit=${limit}`
+        `${API_URL}/api/leaderboard/${difficulty}?${params}`
     );
 
     if (!response.ok) {

@@ -41,13 +41,9 @@ export function Lobby({ room, currentUserSocketId, onReady, onLeave }: LobbyProp
 
                 {player ? (
                     <>
-                        <div className="w-24 h-24 rounded-full bg-white/10 p-1 ring-2 ring-white/20">
+                        <div className="w-24 h-24 rounded-full bg-white/10 p-1 ring-2 ring-white/20 flex items-center justify-center">
                             {avatar && (
-                                <img
-                                    src={avatar.url}
-                                    alt={avatar.name}
-                                    className="w-full h-full object-contain"
-                                />
+                                <span className="text-5xl">{avatar.emoji}</span>
                             )}
                         </div>
                         <div className="text-center">

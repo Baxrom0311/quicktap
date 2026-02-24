@@ -12,7 +12,8 @@ import { motion } from "framer-motion";
 import { Zap, Target, Clock, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useCallback } from "react";
 import { DifficultySelector } from "./DifficultySelector";
-import type { Difficulty, DifficultyConfig } from "@/hooks/useGameState";
+import type { Difficulty, DifficultyConfig, GameMode } from "@/hooks/useGameState";
+import { GENIUS_ROUNDS } from "@/hooks/useGameState";
 
 interface StartScreenProps {
   onStart: () => void;
@@ -21,6 +22,8 @@ interface StartScreenProps {
   onDifficultyChange: (difficulty: Difficulty) => void;
   isMuted: boolean;
   toggleMute: () => void;
+  gameMode: GameMode;
+  onGameModeChange: (mode: GameMode) => void;
 }
 
 export function StartScreen({
@@ -30,6 +33,8 @@ export function StartScreen({
   onDifficultyChange,
   isMuted,
   toggleMute,
+  gameMode,
+  onGameModeChange,
 }: StartScreenProps) {
   // Keyboard event handler for start screen
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
@@ -159,6 +164,35 @@ export function StartScreen({
           />
         </motion.div>
 
+        {/* Game Mode Selector */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.35, duration: 0.3 }}
+          className="relative z-10 mt-6 flex justify-center gap-3"
+        >
+          <button
+            onClick={() => onGameModeChange('classic')}
+            className={`px-6 py-3 font-display text-lg tracking-wider border-2 transition-all ${gameMode === 'classic'
+                ? 'bg-white/10 border-white text-white'
+                : 'bg-transparent border-white/20 text-white/40 hover:border-white/50'
+              }`}
+          >
+            🎮 CLASSIC
+            <div className="text-xs text-white/40 mt-1">1 raund</div>
+          </button>
+          <button
+            onClick={() => onGameModeChange('genius')}
+            className={`px-6 py-3 font-display text-lg tracking-wider border-2 transition-all ${gameMode === 'genius'
+                ? 'bg-primary/10 border-primary text-primary'
+                : 'bg-transparent border-white/20 text-white/40 hover:border-primary/50'
+              }`}
+          >
+            🧠 GENIUS
+            <div className="text-xs text-white/40 mt-1">{GENIUS_ROUNDS} raund, o'rtacha</div>
+          </button>
+        </motion.div>
+
         {/* Start Button */}
         <motion.button
           initial={{ opacity: 0, scale: 0.9 }}
@@ -167,7 +201,7 @@ export function StartScreen({
           whileHover={{ scale: 1.02 }}
           whileTap={{ scale: 0.98 }}
           onClick={onStart}
-          className="relative z-10 mt-8 px-16 py-6 bg-primary text-primary-foreground font-display text-4xl md:text-5xl tracking-wider neon-box-glow border-4 border-primary hover:bg-transparent hover:text-primary transition-colors"
+          className="relative z-10 mt-6 px-16 py-6 bg-primary text-primary-foreground font-display text-4xl md:text-5xl tracking-wider neon-box-glow border-4 border-primary hover:bg-transparent hover:text-primary transition-colors"
           style={{
             backgroundColor: difficultyConfig.color,
             borderColor: difficultyConfig.color,

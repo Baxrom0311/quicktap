@@ -38,12 +38,92 @@ function generateRoomCode(): string {
     return code;
 }
 
+interface UserProfilePayload {
+    userId: string;
+    username: string;
+    avatar: string;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function normalizeRoomCode(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return /^\d{6}$/.test(trimmed) ? trimmed : null;
+}
+
+function isValidUserProfile(value: unknown): value is UserProfilePayload {
+    if (!isObject(value)) return false;
+    const userId = value.userId;
+    const username = value.username;
+    const avatar = value.avatar;
+
+    if (
+        typeof userId !== 'string' ||
+        typeof username !== 'string' ||
+        typeof avatar !== 'string'
+    ) {
+        return false;
+    }
+
+    if (userId.length < 8 || userId.length > 128) return false;
+    if (username.length < 3 || username.length > 15) return false;
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) return false;
+    if (avatar.length < 1 || avatar.length > 64) return false;
+
+    return true;
+}
+
+function asCallback(value: unknown): ((payload: any) => void) | null {
+    return typeof value === 'function' ? (value as (payload: any) => void) : null;
+}
+
+// Room cleanup interval (TTL) — removes stale rooms to prevent memory leaks
+const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const CLEANUP_INTERVAL_MS = 60 * 1000; // Check every 60 seconds
+
+function startRoomCleanup(io: Server) {
+    setInterval(() => {
+        const now = Date.now();
+        for (const [code, room] of Array.from(rooms.entries())) {
+            if (now - room.createdAt > ROOM_TTL_MS) {
+                // Notify remaining players before removing
+                io.to(code).emit('game_aborted', { reason: 'Room expired due to inactivity' });
+
+                // Clean up socket-to-room mappings
+                for (const player of room.players) {
+                    socketToRoom.delete(player.socketId);
+                }
+
+                rooms.delete(code);
+                console.log(`Room ${code} cleaned up (TTL expired)`);
+            }
+        }
+    }, CLEANUP_INTERVAL_MS);
+}
+
 export function setupSocket(io: Server) {
+    // Start room cleanup timer
+    startRoomCleanup(io);
+
     io.on('connection', (socket: Socket) => {
         console.log(`User connected: ${socket.id}`);
 
         // Create Room
-        socket.on('create_room', (userProfile: { userId: string; username: string; avatar: string }, callback) => {
+        socket.on('create_room', (userProfile: unknown, callback: unknown) => {
+            const cb = asCallback(callback);
+            if (!isValidUserProfile(userProfile)) {
+                cb?.({ success: false, error: 'Invalid user profile' });
+                return;
+            }
+
+            if (socketToRoom.has(socket.id)) {
+                cb?.({ success: false, error: 'Already in a room' });
+                return;
+            }
+
             const code = generateRoomCode();
 
             const player: Player = {
@@ -71,24 +151,56 @@ export function setupSocket(io: Server) {
             socketToRoom.set(socket.id, code);
             socket.join(code);
 
-            callback({ success: true, code, room });
+            cb?.({ success: true, code, room });
             console.log(`Room created: ${code} by ${userProfile.username}`);
         });
 
         // Join Room
-        socket.on('join_room', ({ code, userProfile }: { code: string; userProfile: any }, callback) => {
+        socket.on('join_room', (payload: unknown, callback: unknown) => {
+            const cb = asCallback(callback);
+            if (!isObject(payload)) {
+                cb?.({ success: false, error: 'Invalid payload' });
+                return;
+            }
+
+            const code = normalizeRoomCode(payload.code);
+            const userProfile = payload.userProfile;
+            if (!code || !isValidUserProfile(userProfile)) {
+                cb?.({ success: false, error: 'Invalid join request' });
+                return;
+            }
+
+            const existingRoomCode = socketToRoom.get(socket.id);
+            if (existingRoomCode && existingRoomCode !== code) {
+                cb?.({ success: false, error: 'Already in another room' });
+                return;
+            }
+
             const room = rooms.get(code);
 
             if (!room) {
-                return callback({ success: false, error: 'Room not found' });
+                cb?.({ success: false, error: 'Room not found' });
+                return;
             }
 
             if (room.status !== 'lobby') {
-                return callback({ success: false, error: 'Game already in progress' });
+                cb?.({ success: false, error: 'Game already in progress' });
+                return;
             }
 
             if (room.players.length >= 2) {
-                return callback({ success: false, error: 'Room is full' });
+                cb?.({ success: false, error: 'Room is full' });
+                return;
+            }
+
+            if (room.players.some((p) => p.userId === userProfile.userId)) {
+                cb?.({ success: false, error: 'User already in room' });
+                return;
+            }
+
+            if (existingRoomCode === code) {
+                cb?.({ success: true, room });
+                return;
             }
 
             const player: Player = {
@@ -109,12 +221,14 @@ export function setupSocket(io: Server) {
             // Notify everyone in room (including sender) that player joined
             io.to(code).emit('update_room', room);
 
-            callback({ success: true, room });
+            cb?.({ success: true, room });
             console.log(`User ${userProfile.username} joined room ${code}`);
         });
 
         // Player Ready
-        socket.on('player_ready', (code: string) => {
+        socket.on('player_ready', (codeInput: unknown) => {
+            const code = normalizeRoomCode(codeInput);
+            if (!code) return;
             const room = rooms.get(code);
             if (!room) return;
 
@@ -128,17 +242,21 @@ export function setupSocket(io: Server) {
                 // Check if all players ready (must be 2 players)
                 if (room.players.length === 2 && room.players.every(p => p.isReady)) {
                     room.status = 'countdown';
+                    io.to(code).emit('update_room', room);
                     io.to(code).emit('game_countdown_start');
 
                     // Start game after 3 seconds
                     setTimeout(() => {
-                        if (rooms.has(code)) {
-                            const currentRoom = rooms.get(code);
-                            if (currentRoom) {
-                                currentRoom.status = 'playing';
-                                currentRoom.startTime = Date.now();
-                                io.to(code).emit('game_start');
-                            }
+                        const currentRoom = rooms.get(code);
+                        if (
+                            currentRoom &&
+                            currentRoom.status === 'countdown' &&
+                            currentRoom.players.length === 2 &&
+                            currentRoom.players.every((p) => p.isReady)
+                        ) {
+                            currentRoom.status = 'playing';
+                            currentRoom.startTime = Date.now();
+                            io.to(code).emit('game_start');
                         }
                     }, 3000);
                 }
@@ -146,7 +264,14 @@ export function setupSocket(io: Server) {
         });
 
         // Score Update
-        socket.on('score_update', ({ code, score }: { code: string; score: number }) => {
+        socket.on('score_update', (payload: unknown) => {
+            if (!isObject(payload)) return;
+            const code = normalizeRoomCode(payload.code);
+            const score = Number(payload.score);
+            if (!code || !Number.isInteger(score) || score < 0 || score > 10000) {
+                return;
+            }
+
             const room = rooms.get(code);
             if (!room || room.status !== 'playing') return;
 
@@ -159,7 +284,16 @@ export function setupSocket(io: Server) {
         });
 
         // Game Finished (Player finished)
-        socket.on('player_finished', ({ code, score }: { code: string; score: number }) => {
+        socket.on('player_finished', (payload: unknown) => {
+            if (!isObject(payload)) return;
+            const code = normalizeRoomCode(payload.code);
+            const score = Number(payload.score);
+            if (!code || !Number.isInteger(score) || score < 0 || score > 10000) {
+                socket.emit('error_message', 'Invalid score payload');
+                socket.disconnect(true);
+                return;
+            }
+
             const room = rooms.get(code);
             if (!room || room.status !== 'playing') return;
 
@@ -228,6 +362,10 @@ export function setupSocket(io: Server) {
 
                 // Check if all finished
                 if (room.players.every(p => p.finished)) {
+                    if (room.players.length < 2) {
+                        return;
+                    }
+
                     // Determine round winner (lower score = better)
                     const sortedPlayers = [...room.players].sort((a, b) => a.score - b.score);
                     const roundWinner = sortedPlayers[0];
@@ -252,6 +390,7 @@ export function setupSocket(io: Server) {
                         });
                     } else {
                         // More rounds to play - emit round result, then prepare next round
+                        room.status = 'countdown';
                         io.to(code).emit('round_over', {
                             roundNumber: room.currentRound,
                             roundWinnerId: roundWinner.userId,
@@ -268,16 +407,18 @@ export function setupSocket(io: Server) {
 
                         // Auto-start next round after 3 seconds
                         setTimeout(() => {
-                            if (rooms.has(code)) {
-                                const currentRoom = rooms.get(code);
-                                if (currentRoom && currentRoom.status !== 'finished') {
-                                    currentRoom.status = 'playing';
-                                    currentRoom.startTime = Date.now();
-                                    io.to(code).emit('game_start', {
-                                        round: currentRoom.currentRound,
-                                        totalRounds: currentRoom.totalRounds
-                                    });
-                                }
+                            const currentRoom = rooms.get(code);
+                            if (
+                                currentRoom &&
+                                currentRoom.status === 'countdown' &&
+                                currentRoom.players.length === 2
+                            ) {
+                                currentRoom.status = 'playing';
+                                currentRoom.startTime = Date.now();
+                                io.to(code).emit('game_start', {
+                                    round: currentRoom.currentRound,
+                                    totalRounds: currentRoom.totalRounds
+                                });
                             }
                         }, 3000);
                     }

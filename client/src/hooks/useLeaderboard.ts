@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { LeaderboardEntry } from '@shared/types';
 import type { Difficulty } from './useGameState';
-import { getLeaderboard, getUserRank, submitScore } from '@/lib/api';
+import { getLeaderboard, getUserRank, submitScore, type LeaderboardPeriod } from '@/lib/api';
 import type { UserProfile } from '@shared/types';
 
 interface UseLeaderboardReturn {
@@ -9,31 +9,35 @@ interface UseLeaderboardReturn {
     loading: boolean;
     error: string | null;
     userRank: number | null;
+    total: number;
     fetchLeaderboard: () => Promise<void>;
     submitUserScore: (score: number, user: UserProfile) => Promise<void>;
 }
 
 export function useLeaderboard(
-    difficulty: Difficulty
+    difficulty: Difficulty,
+    period: LeaderboardPeriod = 'all',
 ): UseLeaderboardReturn {
     const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [userRank, setUserRank] = useState<number | null>(null);
+    const [total, setTotal] = useState(0);
 
     const fetchLeaderboard = useCallback(async () => {
         setLoading(true);
         setError(null);
 
         try {
-            const data = await getLeaderboard(difficulty, 100);
+            const data = await getLeaderboard(difficulty, 50, period);
             setLeaderboard(data.leaderboard);
+            setTotal(data.total || data.leaderboard.length);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'O\'qishda xatolik');
         } finally {
             setLoading(false);
         }
-    }, [difficulty]);
+    }, [difficulty, period]);
 
     const fetchUserRank = useCallback(
         async (userId: string) => {
@@ -78,6 +82,7 @@ export function useLeaderboard(
         loading,
         error,
         userRank,
+        total,
         fetchLeaderboard,
         submitUserScore,
     };

@@ -19,19 +19,22 @@ import { ProfileSetupDialog } from "@/components/ProfileSetupDialog";
 import { useUser } from "@/contexts/UserContext";
 import { getAvatarById } from "@shared/types";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 // Multiplayer imports
 import { useMultiplayer } from "@/hooks/useMultiplayer";
 import { MultiplayerMenu } from "@/components/MultiplayerMenu";
 import { JoinGameDialog } from "@/components/JoinGameDialog";
 import { Lobby } from "@/components/Lobby";
+import { CountdownOverlay } from "@/components/CountdownOverlay";
+import { MultiplayerGameOver } from "@/components/MultiplayerGameOver";
 import { toast } from "sonner";
-import { Users } from "lucide-react";
+import { Users, Settings } from "lucide-react";
 
 export default function Home() {
   const { user, setUser, hasProfile } = useUser();
   const [showProfileSetup, setShowProfileSetup] = useState(!hasProfile);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Multiplayer State
   const [view, setView] = useState<'main' | 'multiplayer_menu' | 'join_dialog' | 'lobby'>('main');
@@ -53,6 +56,9 @@ export default function Home() {
     status: mpStatus,
     room,
     opponent,
+    currentRound: mpCurrentRound,
+    totalRounds: mpTotalRounds,
+    roundWinners,
     createRoom,
     joinRoom,
     setReady,
@@ -60,6 +66,7 @@ export default function Home() {
     finishGame,
     leaveRoom
   } = useMultiplayer(user);
+  const prevMpStatusRef = useRef(mpStatus);
 
   const {
     gameState,
@@ -72,12 +79,21 @@ export default function Home() {
     difficultyConfig,
     setDifficulty,
     startGame,
-    startImmediate, // Added for multiplayer
+    startImmediate,
     handleTap,
     reset,
     clearHistory,
     streak,
     isNewBest,
+    // Multi-round
+    gameMode,
+    setGameMode,
+    currentRound,
+    totalRounds,
+    roundResults,
+    roundAverage,
+    roundBest,
+    nextRound,
   } = useGameState();
 
   const {
@@ -91,17 +107,15 @@ export default function Home() {
     initAudioContext,
   } = useSoundEffects();
 
-  // Handle Multiplayer Status Changes
+  // Start a fresh local round whenever server transitions into playing.
   useEffect(() => {
-    if (mpStatus === 'playing' && gameState === 'idle') {
-      // Game started by server
+    const prevStatus = prevMpStatusRef.current;
+    if (prevStatus !== 'playing' && mpStatus === 'playing') {
       startImmediate();
       initAudioContext();
-    } else if (mpStatus === 'finished' && gameState !== 'idle') {
-      // Game finished by server (or someone won)
-      // reset(); // Don't reset immediately, let them see result
     }
-  }, [mpStatus, gameState, startImmediate, initAudioContext, reset]);
+    prevMpStatusRef.current = mpStatus;
+  }, [mpStatus, startImmediate, initAudioContext]);
 
   useEffect(() => {
     if (view === 'lobby' && !room) {
@@ -132,6 +146,28 @@ export default function Home() {
     reset();
   };
 
+  // Multiplayer Game Over screen
+  if (view === 'lobby' && mpStatus === 'finished' && room) {
+    return (
+      <MultiplayerGameOver
+        players={room.players}
+        currentUserId={user?.userId || ''}
+        roundWinners={roundWinners}
+        totalRounds={mpTotalRounds}
+        onRematch={() => {
+          // Reset local state, go back to lobby and set ready
+          reset();
+          setReady();
+        }}
+        onLeave={() => {
+          leaveRoom();
+          reset();
+          setView('main');
+        }}
+      />
+    );
+  }
+
   // Show game area when playing (Single or Multiplayer)
   if (gameState !== "idle" || (view === 'lobby' && mpStatus === 'playing')) {
     const isMultiplayerMode = view === 'lobby';
@@ -145,7 +181,7 @@ export default function Home() {
         onTap={isMultiplayerMode ? handleMultiplayerTap : handleTap}
         onReset={handleReset}
         onTryAgain={isMultiplayerMode ? () => { } : startGame}
-        // In multiplayer, try again usually means back to lobby or rematch (not implemented yet)
+        onNextRound={nextRound}
 
         // Sound props
         playSuccess={playSuccess}
@@ -162,6 +198,14 @@ export default function Home() {
         // Gameplay props
         streak={streak}
         isNewBest={isNewBest}
+
+        // Multi-round props
+        gameMode={gameMode}
+        currentRound={currentRound}
+        totalRounds={totalRounds}
+        roundResults={roundResults}
+        roundAverage={roundAverage}
+        roundBest={roundBest}
       />
     );
   }
@@ -169,13 +213,16 @@ export default function Home() {
   // Show start screen with history when idle
   return (
     <div className="min-h-screen flex flex-col bg-background">
-      {/* Profile Setup Dialog */}
+      {/* Profile Setup / Edit Dialog */}
       <ProfileSetupDialog
-        open={showProfileSetup}
+        open={showProfileSetup || isEditingProfile}
+        existingProfile={isEditingProfile ? user : null}
         onComplete={(profile) => {
           setUser(profile);
           setShowProfileSetup(false);
+          setIsEditingProfile(false);
         }}
+        onClose={() => setIsEditingProfile(false)}
       />
 
       {/* Join Game Dialog */}
@@ -192,22 +239,22 @@ export default function Home() {
         onCancel={() => setView('multiplayer_menu')}
       />
 
-      {/* User Profile Badge (top right) */}
+      {/* User Profile Badge (top right) - clickable to edit */}
       {user && (() => {
         const avatarData = getAvatarById(user.avatar);
         return (
-          <div className="fixed top-6 right-6 z-10 flex items-center gap-3 px-4 py-2 bg-card border-2 border-border">
-            <div className="w-10 h-10 rounded-lg overflow-hidden bg-white/5 border border-border">
+          <button
+            onClick={() => setIsEditingProfile(true)}
+            className="fixed top-6 right-6 z-10 flex items-center gap-3 px-4 py-2 bg-card border-2 border-border hover:border-primary/50 transition-colors cursor-pointer group"
+          >
+            <div className="w-10 h-10 rounded-lg overflow-hidden bg-white/5 border border-border flex items-center justify-center">
               {avatarData && (
-                <img
-                  src={avatarData.url}
-                  alt={avatarData.name}
-                  className="w-full h-full object-contain p-1"
-                />
+                <span className="text-2xl">{avatarData.emoji}</span>
               )}
             </div>
             <span className="font-display text-white tracking-wider">{user.username}</span>
-          </div>
+            <Settings className="w-4 h-4 text-white/30 group-hover:text-white/60 transition-colors" />
+          </button>
         );
       })()}
 
@@ -236,6 +283,11 @@ export default function Home() {
               }}
               isMuted={isMuted}
               toggleMute={toggleMute}
+              gameMode={gameMode}
+              onGameModeChange={(mode) => {
+                playClick();
+                setGameMode(mode);
+              }}
             />
 
             {/* Multiplayer Button */}
@@ -307,6 +359,8 @@ export default function Home() {
                 setView('main');
               }}
             />
+            {/* Countdown overlay */}
+            <CountdownOverlay active={mpStatus === 'countdown'} />
           </div>
         )}
       </AnimatePresence>

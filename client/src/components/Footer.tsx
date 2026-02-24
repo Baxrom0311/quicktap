@@ -20,6 +20,7 @@ import { useLeaderboard } from "@/hooks/useLeaderboard";
 import { useUser } from "@/contexts/UserContext";
 import { LeaderboardRow } from "./LeaderboardRow";
 import type { Difficulty } from "@/hooks/useGameState";
+import type { LeaderboardPeriod } from "@/lib/api";
 
 interface FooterProps {
   bestTime: number | null;
@@ -29,7 +30,8 @@ interface FooterProps {
 export function Footer({ bestTime, averageTime }: FooterProps) {
   const { user } = useUser();
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>('normal');
-  const { leaderboard, loading, error, userRank } = useLeaderboard(selectedDifficulty);
+  const [selectedPeriod, setSelectedPeriod] = useState<LeaderboardPeriod>('all');
+  const { leaderboard, loading, error, userRank } = useLeaderboard(selectedDifficulty, selectedPeriod);
 
   const handleShare = async () => {
     const text = bestTime
@@ -155,6 +157,27 @@ export function Footer({ bestTime, averageTime }: FooterProps) {
                   <TabsTrigger value="normal" className="font-display">NORMAL</TabsTrigger>
                   <TabsTrigger value="hard" className="font-display">HARD</TabsTrigger>
                 </TabsList>
+
+                {/* Period Filter */}
+                <div className="flex gap-2 mt-3">
+                  {([
+                    { value: 'today', label: 'Bugun' },
+                    { value: 'week', label: 'Hafta' },
+                    { value: 'month', label: 'Oy' },
+                    { value: 'all', label: 'Barchasi' },
+                  ] as const).map(({ value, label }) => (
+                    <button
+                      key={value}
+                      onClick={() => setSelectedPeriod(value)}
+                      className={`flex-1 py-1.5 text-sm font-display tracking-wider border transition-colors ${selectedPeriod === value
+                          ? 'border-primary text-primary bg-primary/10'
+                          : 'border-border text-white/40 hover:text-white/60'
+                        }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
 
                 <TabsContent value={selectedDifficulty} className="flex-1 overflow-hidden flex flex-col mt-4">
                   {loading ? (

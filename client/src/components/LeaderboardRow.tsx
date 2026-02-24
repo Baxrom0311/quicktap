@@ -25,8 +25,8 @@ export function LeaderboardRow({ rank, entry, isCurrentUser }: LeaderboardRowPro
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: rank * 0.02 }}
             className={`flex items-center gap-3 p-3 border-2 transition-colors ${isCurrentUser
-                    ? 'bg-primary/10 border-primary'
-                    : 'bg-card border-border hover:border-primary/30'
+                ? 'bg-primary/10 border-primary'
+                : 'bg-card border-border hover:border-primary/30'
                 }`}
         >
             {/* Rank */}
@@ -39,17 +39,11 @@ export function LeaderboardRow({ rank, entry, isCurrentUser }: LeaderboardRowPro
             </div>
 
             {/* Avatar */}
-            <div className="w-12 h-12 rounded-lg overflow-hidden bg-white/5 border border-border flex-shrink-0">
+            <div className="w-12 h-12 rounded-lg overflow-hidden bg-white/5 border border-border flex-shrink-0 flex items-center justify-center">
                 {avatarData ? (
-                    <img
-                        src={avatarData.url}
-                        alt={avatarData.name}
-                        className="w-full h-full object-contain p-1"
-                    />
+                    <span className="text-3xl">{avatarData.emoji}</span>
                 ) : (
-                    <div className="w-full h-full flex items-center justify-center text-2xl">
-                        ❓
-                    </div>
+                    <span className="text-2xl">❓</span>
                 )}
             </div>
 

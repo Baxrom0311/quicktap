@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Dialog,
@@ -12,12 +12,29 @@ import { AVATAR_OPTIONS, type UserProfile } from '@shared/types';
 interface ProfileSetupDialogProps {
     open: boolean;
     onComplete: (profile: UserProfile) => void;
+    onClose?: () => void;
+    /** If provided, dialog opens in edit mode with pre-filled values */
+    existingProfile?: UserProfile | null;
 }
 
-export function ProfileSetupDialog({ open, onComplete }: ProfileSetupDialogProps) {
+export function ProfileSetupDialog({ open, onComplete, onClose, existingProfile }: ProfileSetupDialogProps) {
+    const isEditMode = !!existingProfile;
     const [username, setUsername] = useState('');
     const [selectedAvatarId, setSelectedAvatarId] = useState<string | null>(null);
     const [error, setError] = useState('');
+
+    // Pre-fill values when editing
+    useEffect(() => {
+        if (open && existingProfile) {
+            setUsername(existingProfile.username);
+            setSelectedAvatarId(existingProfile.avatar);
+            setError('');
+        } else if (open && !existingProfile) {
+            setUsername('');
+            setSelectedAvatarId(null);
+            setError('');
+        }
+    }, [open, existingProfile]);
 
     const handleSubmit = () => {
         // Validation
@@ -41,31 +58,46 @@ export function ProfileSetupDialog({ open, onComplete }: ProfileSetupDialogProps
             return;
         }
 
-        // Create user profile
-        const profile: UserProfile = {
-            userId: crypto.randomUUID(),
-            username: username.trim(),
-            avatar: selectedAvatarId,
-            createdAt: new Date().toISOString(),
-            stats: {
-                easy: { games: 0, bestScore: null },
-                normal: { games: 0, bestScore: null },
-                hard: { games: 0, bestScore: null },
-            },
-        };
+        if (isEditMode && existingProfile) {
+            // Update existing profile, preserving userId, createdAt, and stats
+            const updatedProfile: UserProfile = {
+                ...existingProfile,
+                username: username.trim(),
+                avatar: selectedAvatarId,
+            };
+            onComplete(updatedProfile);
+        } else {
+            // Create new profile
+            const profile: UserProfile = {
+                userId: crypto.randomUUID(),
+                username: username.trim(),
+                avatar: selectedAvatarId,
+                createdAt: new Date().toISOString(),
+                stats: {
+                    easy: { games: 0, bestScore: null },
+                    normal: { games: 0, bestScore: null },
+                    hard: { games: 0, bestScore: null },
+                },
+            };
+            onComplete(profile);
+        }
+    };
 
-        onComplete(profile);
+    const handleOpenChange = (isOpen: boolean) => {
+        if (!isOpen && isEditMode && onClose) {
+            onClose();
+        }
     };
 
     return (
-        <Dialog open={open} modal>
-            <DialogContent className="bg-card border-2 border-border max-w-md" showCloseButton={false}>
+        <Dialog open={open} onOpenChange={handleOpenChange} modal>
+            <DialogContent className="bg-card border-2 border-border max-w-md" showCloseButton={isEditMode}>
                 <DialogHeader>
                     <DialogTitle className="font-display text-3xl text-white tracking-wider text-center">
-                        ASSALOMU ALAYKUM!
+                        {isEditMode ? 'PROFILNI TAHRIRLASH' : 'ASSALOMU ALAYKUM!'}
                     </DialogTitle>
                     <DialogDescription className="text-muted-foreground text-center mt-2">
-                        O'yinni boshlash uchun profil yarating
+                        {isEditMode ? 'Username yoki avatarni o\'zgartiring' : 'O\'yinni boshlash uchun profil yarating'}
                     </DialogDescription>
                 </DialogHeader>
 
@@ -85,16 +117,12 @@ export function ProfileSetupDialog({ open, onComplete }: ProfileSetupDialogProps
                                         setSelectedAvatarId(avatar.id);
                                         setError('');
                                     }}
-                                    className={`aspect-square rounded-lg border-2 transition-all overflow-hidden bg-white/5 hover:bg-white/10 ${selectedAvatarId === avatar.id
-                                            ? 'border-primary ring-2 ring-primary scale-105'
-                                            : 'border-border'
+                                    className={`aspect-square rounded-lg border-2 transition-all overflow-hidden bg-white/5 hover:bg-white/10 flex items-center justify-center ${selectedAvatarId === avatar.id
+                                        ? 'border-primary ring-2 ring-primary scale-105'
+                                        : 'border-border'
                                         }`}
                                 >
-                                    <img
-                                        src={avatar.url}
-                                        alt={avatar.name}
-                                        className="w-full h-full object-contain p-1"
-                                    />
+                                    <span className="text-3xl">{avatar.emoji}</span>
                                 </motion.button>
                             ))}
                         </div>
@@ -111,6 +139,12 @@ export function ProfileSetupDialog({ open, onComplete }: ProfileSetupDialogProps
                             onChange={(e) => {
                                 setUsername(e.target.value);
                                 setError('');
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleSubmit();
+                                }
                             }}
                             placeholder="username"
                             maxLength={15}
@@ -142,7 +176,7 @@ export function ProfileSetupDialog({ open, onComplete }: ProfileSetupDialogProps
                         onClick={handleSubmit}
                         className="w-full py-4 bg-primary text-primary-foreground font-display text-xl tracking-wider hover:bg-primary/90 transition-colors"
                     >
-                        O'YINNI BOSHLASH
+                        {isEditMode ? 'SAQLASH' : 'O\'YINNI BOSHLASH'}
                     </motion.button>
                 </div>
             </DialogContent>

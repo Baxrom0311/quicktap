@@ -14,7 +14,8 @@ import { Volume2, VolumeX, Upload, Share2, Send, Flame, Trophy } from "lucide-re
 import { toast } from "sonner";
 import { useAntiTamper } from "@/hooks/useAntiTamper";
 import { useConfetti } from "@/hooks/useConfetti";
-import type { GameState, DifficultyConfig, Difficulty } from "@/hooks/useGameState";
+import type { GameState, DifficultyConfig, Difficulty, GameMode } from "@/hooks/useGameState";
+import { GENIUS_ROUNDS } from "@/hooks/useGameState";
 import { useLeaderboard } from "@/hooks/useLeaderboard";
 import { useUser } from "@/contexts/UserContext";
 
@@ -28,6 +29,7 @@ interface GameAreaProps {
   onTap: () => void;
   onReset: () => void;
   onTryAgain: () => void;
+  onNextRound?: () => void;
   // Sound props
   playSuccess: () => void;
   playError: () => void;
@@ -40,6 +42,13 @@ interface GameAreaProps {
   opponent?: Player | null;
   streak?: number;
   isNewBest?: boolean;
+  // Multi-round props
+  gameMode?: GameMode;
+  currentRound?: number;
+  totalRounds?: number;
+  roundResults?: number[];
+  roundAverage?: number | null;
+  roundBest?: number | null;
 }
 
 export function GameArea({
@@ -50,6 +59,7 @@ export function GameArea({
   onTap,
   onReset,
   onTryAgain,
+  onNextRound,
   playSuccess,
   playError,
   playTargetAppear,
@@ -60,6 +70,12 @@ export function GameArea({
   opponent = null,
   streak = 0,
   isNewBest = false,
+  gameMode = "classic",
+  currentRound = 1,
+  totalRounds = 1,
+  roundResults = [],
+  roundAverage = null,
+  roundBest = null,
 }: GameAreaProps) {
   const prevGameStateRef = useRef<GameState>(gameState);
 
@@ -78,7 +94,7 @@ export function GameArea({
     }
 
     // Successful tap - play different sound based on reaction time
-    if (gameState === "result" && prevState === "ready" && reactionTime !== null) {
+    if ((gameState === "result" || gameState === "round_summary") && prevState === "ready" && reactionTime !== null) {
       // Adjust threshold based on difficulty
       const excellentThreshold = difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
       if (reactionTime < excellentThreshold) {
@@ -93,6 +109,14 @@ export function GameArea({
 
   const handleClick = () => {
     if (gameState === "waiting" || gameState === "ready") {
+      onTap();
+    }
+  };
+
+  // Touch handler for zero-delay mobile taps
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (gameState === "waiting" || gameState === "ready") {
+      e.preventDefault(); // Prevent click from also firing
       onTap();
     }
   };
@@ -114,12 +138,14 @@ export function GameArea({
       return;
     }
 
-    // Space bar to tap/try again
+    // Space bar to tap/try again/next round
     if (event.code === "Space") {
       event.preventDefault();
       if (gameState === "ready" || gameState === "waiting") {
         onTap();
-      } else if (gameState === "result") {
+      } else if (gameState === "round_summary" && onNextRound) {
+        onNextRound();
+      } else if (gameState === "result" || gameState === "final_result") {
         onTryAgain();
       }
     }
@@ -129,7 +155,9 @@ export function GameArea({
       event.preventDefault();
       if (gameState === "ready" || gameState === "waiting") {
         onTap();
-      } else if (gameState === "early" || gameState === "result") {
+      } else if (gameState === "round_summary" && onNextRound) {
+        onNextRound();
+      } else if (gameState === "early" || gameState === "result" || gameState === "final_result") {
         onTryAgain();
       }
     }
@@ -145,7 +173,7 @@ export function GameArea({
       event.preventDefault();
       toggleMute();
     }
-  }, [gameState, onTap, onTryAgain, onReset, toggleMute]);
+  }, [gameState, onTap, onTryAgain, onReset, onNextRound, toggleMute]);
 
   // Add keyboard event listener
   useEffect(() => {
@@ -159,8 +187,10 @@ export function GameArea({
     <div
       className="min-h-screen flex flex-col items-center justify-center cursor-pointer select-none relative overflow-hidden"
       onClick={handleClick}
+      onTouchStart={handleTouchStart}
       tabIndex={0}
       style={{
+        touchAction: 'manipulation',
         background: gameState === "ready"
           ? difficulty === "hard"
             ? "oklch(0.15 0.08 25)"
@@ -207,7 +237,7 @@ export function GameArea({
 
       <AnimatePresence mode="wait">
         {gameState === "waiting" && (
-          <WaitingState key="waiting" difficultyConfig={difficultyConfig} />
+          <WaitingState key="waiting" difficultyConfig={difficultyConfig} currentRound={currentRound} totalRounds={totalRounds} gameMode={gameMode} />
         )}
         {gameState === "ready" && (
           <ReadyState key="ready" difficultyConfig={difficultyConfig} />
@@ -224,6 +254,30 @@ export function GameArea({
             onTryAgain={onTryAgain}
             onReset={onReset}
             streak={streak}
+            isNewBest={isNewBest}
+          />
+        )}
+        {gameState === "round_summary" && reactionTime !== null && (
+          <RoundSummaryState
+            key="round_summary"
+            reactionTime={reactionTime}
+            difficultyConfig={difficultyConfig}
+            currentRound={currentRound}
+            totalRounds={totalRounds}
+            roundResults={roundResults}
+            onNextRound={onNextRound!}
+          />
+        )}
+        {gameState === "final_result" && reactionTime !== null && (
+          <FinalResultState
+            key="final_result"
+            reactionTime={reactionTime}
+            difficulty={difficulty}
+            difficultyConfig={difficultyConfig}
+            onTryAgain={onTryAgain}
+            onReset={onReset}
+            roundResults={roundResults}
+            roundBest={roundBest}
             isNewBest={isNewBest}
           />
         )}
@@ -272,9 +326,12 @@ function KeyboardHint() {
 
 interface WaitingStateProps {
   difficultyConfig: DifficultyConfig;
+  currentRound?: number;
+  totalRounds?: number;
+  gameMode?: GameMode;
 }
 
-function WaitingState({ difficultyConfig }: WaitingStateProps) {
+function WaitingState({ difficultyConfig, currentRound = 1, totalRounds = 1, gameMode = "classic" }: WaitingStateProps) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -283,6 +340,12 @@ function WaitingState({ difficultyConfig }: WaitingStateProps) {
       transition={{ duration: 0.1 }}
       className="text-center z-10"
     >
+      {/* Round counter for genius mode */}
+      {gameMode === "genius" && (
+        <div className="font-display text-2xl text-white/40 tracking-widest mb-4">
+          RAUND {currentRound}/{totalRounds}
+        </div>
+      )}
       <div className="font-display text-4xl md:text-6xl text-white/80 tracking-wider">
         KUTING
       </div>
@@ -374,6 +437,265 @@ function EarlyState({ onTryAgain }: EarlyStateProps) {
         QAYTA URINISH
         <span className="ml-3 text-sm text-white/50">[SPACE]</span>
       </button>
+    </motion.div>
+  );
+}
+
+// ─── Round Summary (Genius mode: between rounds) ───
+
+interface RoundSummaryStateProps {
+  reactionTime: number;
+  difficultyConfig: DifficultyConfig;
+  currentRound: number;
+  totalRounds: number;
+  roundResults: number[];
+  onNextRound: () => void;
+}
+
+function RoundSummaryState({ reactionTime, difficultyConfig, currentRound, totalRounds, roundResults, onNextRound }: RoundSummaryStateProps) {
+  const currentAvg = Math.round(roundResults.reduce((s, t) => s + t, 0) / roundResults.length);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+      className="text-center z-10 px-4"
+    >
+      {/* Round indicator */}
+      <div className="font-display text-xl text-white/40 tracking-widest mb-2">
+        RAUND {roundResults.length}/{totalRounds}
+      </div>
+
+      {/* This round's time */}
+      <motion.div
+        initial={{ y: -30, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.2 }}
+        className="font-display text-[clamp(4rem,15vw,10rem)] leading-none"
+        style={{ color: difficultyConfig.color }}
+      >
+        {reactionTime}
+      </motion.div>
+      <div className="font-display text-xl text-white/60 tracking-widest">MS</div>
+
+      {/* Round dots */}
+      <div className="flex justify-center gap-3 mt-6">
+        {Array.from({ length: totalRounds }).map((_, i) => (
+          <div
+            key={i}
+            className="flex flex-col items-center gap-1"
+          >
+            <div
+              className="w-10 h-10 flex items-center justify-center font-display text-sm border-2"
+              style={{
+                borderColor: i < roundResults.length ? difficultyConfig.color : 'rgba(255,255,255,0.15)',
+                backgroundColor: i < roundResults.length ? `${difficultyConfig.color}20` : 'transparent',
+                color: i < roundResults.length ? difficultyConfig.color : 'rgba(255,255,255,0.3)',
+              }}
+            >
+              {i < roundResults.length ? roundResults[i] : '—'}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Running average */}
+      <div className="mt-4 text-white/50 font-display tracking-wider">
+        O'RTACHA: <span style={{ color: difficultyConfig.color }}>{currentAvg}ms</span>
+      </div>
+
+      {/* Next round button */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onNextRound();
+        }}
+        className="mt-8 px-12 py-4 font-display text-2xl tracking-wider text-primary-foreground border-2 hover:opacity-90 transition-colors"
+        style={{
+          backgroundColor: difficultyConfig.color,
+          borderColor: difficultyConfig.color,
+        }}
+      >
+        KEYINGI RAUND →
+        <span className="ml-3 text-sm opacity-60">[SPACE]</span>
+      </button>
+    </motion.div>
+  );
+}
+
+// ─── Final Result (Genius mode: after all rounds) ───
+
+interface FinalResultStateProps {
+  reactionTime: number;
+  difficulty: Difficulty;
+  difficultyConfig: DifficultyConfig;
+  onTryAgain: () => void;
+  onReset: () => void;
+  roundResults: number[];
+  roundBest: number | null;
+  isNewBest: boolean;
+}
+
+function FinalResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, onReset, roundResults, roundBest, isNewBest }: FinalResultStateProps) {
+  const rating = getReactionRating(reactionTime, difficulty);
+  const { user, updateStats } = useUser();
+  const { submitUserScore } = useLeaderboard(difficulty);
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const { fire: fireConfetti } = useConfetti();
+
+  useEffect(() => {
+    const excellentThreshold = difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
+    if (reactionTime < excellentThreshold || isNewBest) {
+      fireConfetti();
+    }
+  }, []);
+
+  const handleSubmitScore = async () => {
+    if (!user || submitted || submitting) return;
+    setSubmitting(true);
+    try {
+      await submitUserScore(reactionTime, user);
+      updateStats(difficulty, reactionTime);
+      setSubmitted(true);
+      toast.success("Natija leaderboard'ga yuklandi!");
+    } catch {
+      toast.error("Leaderboard'ga yuklanmadi");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.15 }}
+      className="text-center z-10 px-4"
+    >
+      {/* Genius badge */}
+      <div className="font-display text-lg text-white/40 tracking-widest mb-2">
+        🧠 GENIUS MODE — YAKUN NATIJA
+      </div>
+
+      {/* Average time (main score) */}
+      <motion.div
+        initial={{ y: -50, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ duration: 0.2 }}
+        className="font-display text-[clamp(5rem,20vw,14rem)] leading-none neon-glow"
+        style={{ color: difficultyConfig.color }}
+      >
+        {reactionTime}
+      </motion.div>
+      <div className="font-display text-2xl text-white/60 tracking-widest -mt-2">
+        O'RTACHA MS
+      </div>
+
+      {/* Rating */}
+      <div className="mt-4">
+        <span className="font-display text-3xl tracking-wider" style={{ color: rating.color }}>
+          {rating.label}
+        </span>
+      </div>
+
+      {/* New best alert */}
+      {isNewBest && (
+        <motion.div
+          initial={{ scale: 0, rotate: -10 }}
+          animate={{ scale: 1, rotate: 0 }}
+          transition={{ type: "spring", bounce: 0.5, delay: 0.2 }}
+          className="mt-3 inline-flex items-center gap-2 px-6 py-2 bg-yellow-500/20 border-2 border-yellow-400 text-yellow-400 font-display text-xl tracking-wider"
+        >
+          <Trophy className="w-6 h-6" /> YANGI REKORD!
+        </motion.div>
+      )}
+
+      {/* All round results */}
+      <div className="mt-6 flex justify-center gap-3 flex-wrap">
+        {roundResults.map((time, i) => (
+          <div
+            key={i}
+            className="flex flex-col items-center"
+          >
+            <div className="text-xs text-white/30 font-display">R{i + 1}</div>
+            <div
+              className="w-14 h-12 flex items-center justify-center font-display text-lg border-2"
+              style={{
+                borderColor: time === roundBest ? difficultyConfig.color : 'rgba(255,255,255,0.15)',
+                backgroundColor: time === roundBest ? `${difficultyConfig.color}20` : 'transparent',
+                color: time === roundBest ? difficultyConfig.color : 'white',
+              }}
+            >
+              {time}
+            </div>
+            {time === roundBest && (
+              <div className="text-xs font-display" style={{ color: difficultyConfig.color }}>⭐</div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Share buttons */}
+      <div className="mt-6 flex justify-center gap-4">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            const text = `🧠 QuickTap Genius Mode: ${reactionTime}ms o'rtacha (${roundResults.length} raund)!`;
+            const url = window.location.origin;
+            window.open(`https://t.me/share/url?url=${url}&text=${encodeURIComponent(text)}`, '_blank');
+          }}
+          className="flex items-center gap-2 px-5 py-2 bg-[#0088cc] text-white font-display hover:bg-[#007dba] transition-colors"
+        >
+          <Send className="w-4 h-4" /> Telegram
+        </button>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            const text = `🧠 QuickTap Genius: ${reactionTime}ms avg!`;
+            const url = window.location.origin;
+            window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${url}`, '_blank');
+          }}
+          className="flex items-center gap-2 px-5 py-2 bg-black border border-white/20 text-white font-display hover:bg-white/10 transition-colors"
+        >
+          <Share2 className="w-4 h-4" /> X
+        </button>
+      </div>
+
+      {/* Action buttons */}
+      <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
+        {user && !submitted && (
+          <button
+            onClick={(e) => { e.stopPropagation(); handleSubmitScore(); }}
+            disabled={submitting}
+            className="px-6 py-3 bg-transparent border-2 border-primary text-primary font-display text-lg tracking-wider hover:bg-primary hover:text-primary-foreground transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            <Upload className="w-4 h-4" />
+            {submitting ? "YUKLANMOQDA..." : "LEADERBOARD"}
+          </button>
+        )}
+        {submitted && (
+          <div className="px-6 py-3 bg-primary/10 border-2 border-primary text-primary font-display text-lg tracking-wider flex items-center justify-center gap-2">
+            ✅ YUKLANDI!
+          </div>
+        )}
+        <button
+          onClick={(e) => { e.stopPropagation(); onTryAgain(); }}
+          className="px-8 py-3 font-display text-xl tracking-wider text-primary-foreground border-2 hover:opacity-90 transition-colors"
+          style={{ backgroundColor: difficultyConfig.color, borderColor: difficultyConfig.color }}
+        >
+          QAYTA O'YNASH [SPACE]
+        </button>
+        <button
+          onClick={(e) => { e.stopPropagation(); onReset(); }}
+          className="px-8 py-3 bg-transparent border-2 border-white/30 text-white/60 font-display text-xl tracking-wider hover:border-white hover:text-white transition-colors"
+        >
+          BOSH SAHIFA [ESC]
+        </button>
+      </div>
     </motion.div>
   );
 }
