@@ -231,9 +231,23 @@ export function setupSocket(io: Server) {
             if (!code) return;
             const room = rooms.get(code);
             if (!room) return;
+            if (room.status !== 'lobby' && room.status !== 'finished') return;
 
             const player = room.players.find(p => p.socketId === socket.id);
             if (player) {
+                if (room.status === 'finished') {
+                    // Explicit rematch flow: reset match state, then treat this click as "ready".
+                    room.status = 'lobby';
+                    room.currentRound = 1;
+                    room.roundWinners = [];
+                    room.startTime = undefined;
+                    room.players.forEach((p) => {
+                        p.isReady = false;
+                        p.finished = false;
+                        p.score = 0;
+                    });
+                }
+
                 player.isReady = true;
 
                 // Notify update
@@ -461,8 +475,14 @@ export function setupSocket(io: Server) {
                         });
                     } else {
                         // Lobby state - just update room
+                        room.status = 'lobby';
+                        room.currentRound = 1;
+                        room.roundWinners = [];
+                        room.startTime = undefined;
                         room.players.forEach((p: Player) => {
                             p.isReady = false;
+                            p.finished = false;
+                            p.score = 0;
                         });
                         io.to(code).emit('update_room', room);
                     }

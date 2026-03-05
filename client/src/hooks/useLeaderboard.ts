@@ -55,7 +55,6 @@ export function useLeaderboard(
         async (score: number, user: UserProfile) => {
             try {
                 await submitScore({
-                    user_id: user.userId,
                     username: user.username,
                     avatar: user.avatar,
                     score,

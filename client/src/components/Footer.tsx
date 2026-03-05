@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLeaderboard } from "@/hooks/useLeaderboard";
-import { useUser } from "@/contexts/UserContext";
 import { LeaderboardRow } from "./LeaderboardRow";
 import type { Difficulty } from "@/hooks/useGameState";
 import type { LeaderboardPeriod } from "@/lib/api";
@@ -28,7 +27,6 @@ interface FooterProps {
 }
 
 export function Footer({ bestTime, averageTime }: FooterProps) {
-  const { user } = useUser();
   const [selectedDifficulty, setSelectedDifficulty] = useState<Difficulty>('normal');
   const [selectedPeriod, setSelectedPeriod] = useState<LeaderboardPeriod>('all');
   const { leaderboard, loading, error, userRank } = useLeaderboard(selectedDifficulty, selectedPeriod);
@@ -205,13 +203,13 @@ export function Footer({ bestTime, averageTime }: FooterProps) {
                             key={entry.id}
                             rank={index + 1}
                             entry={entry}
-                            isCurrentUser={user?.userId === entry.user_id}
+                            isCurrentUser={entry.is_me === true}
                           />
                         ))}
                       </div>
 
                       {/* User rank if not in top visible */}
-                      {user && userRank && userRank > 10 && (
+                      {userRank && userRank > 10 && (
                         <div className="mt-4 pt-4 border-t-2 border-border">
                           <div className="flex justify-between items-center px-3 py-2 bg-background">
                             <span className="text-muted-foreground">Sizning o'rningiz:</span>

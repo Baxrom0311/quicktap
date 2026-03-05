@@ -10,6 +10,8 @@ import { fileURLToPath } from 'url';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
+import { randomBytes } from 'crypto';
+import type { CorsOptions } from 'cors';
 
 dotenv.config();
 
@@ -27,14 +29,37 @@ const pool = new Pool({
     port: parseInt(process.env.DB_PORT || '5432'),
 });
 
-// CORS origin (shared between Express and Socket.io)
-const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+function parseAllowedOrigins(value: string | undefined): string[] {
+    if (!value) {
+        return ['http://localhost:5173', 'http://localhost:3001'];
+    }
+    return value
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+}
+
+const allowedOrigins = parseAllowedOrigins(process.env.CORS_ORIGIN);
+
+function isOriginAllowed(origin: string | undefined): boolean {
+    // Non-browser requests (no Origin header) should pass.
+    if (!origin) return true;
+    return allowedOrigins.includes(origin);
+}
+
+const corsOriginHandler: CorsOptions['origin'] = (origin, callback) => {
+    if (isOriginAllowed(origin)) {
+        callback(null, true);
+        return;
+    }
+    callback(new Error('Not allowed by CORS'));
+};
 
 // Middleware
 app.use(helmet());
 
 app.use(cors({
-    origin: corsOrigin,
+    origin: corsOriginHandler,
     methods: ['GET', 'POST'],
     credentials: true
 }));
@@ -93,58 +118,96 @@ if (process.env.NODE_ENV === 'production' && JWT_SECRET === 'dev_secret_key_1234
     throw new Error('JWT_SECRET must be set in production.');
 }
 
+const GUEST_TOKEN_TTL_SECONDS = Number.parseInt(
+    process.env.GUEST_TOKEN_TTL_SECONDS ?? '2592000',
+    10
+);
+
+interface AuthTokenPayload extends jwt.JwtPayload {
+    sub: string;
+    scope?: 'guest';
+}
+
+interface AuthenticatedRequest extends express.Request {
+    auth?: AuthTokenPayload;
+}
+
+function createGuestSession() {
+    const playerId = randomBytes(16).toString('hex');
+    const accessToken = jwt.sign({ scope: 'guest' }, JWT_SECRET, {
+        subject: playerId,
+        expiresIn: GUEST_TOKEN_TTL_SECONDS,
+    });
+
+    return {
+        accessToken,
+        playerId,
+        expiresInSeconds: GUEST_TOKEN_TTL_SECONDS,
+    };
+}
+
 // Auth Middleware
-const authenticateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+const authenticateToken = (req: AuthenticatedRequest, res: express.Response, next: express.NextFunction) => {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) return res.sendStatus(401);
 
-    jwt.verify(token, JWT_SECRET, (err: any, user: any) => {
-        if (err) return res.sendStatus(403);
-        (req as any).user = user;
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (typeof decoded !== 'object' || decoded === null || typeof decoded.sub !== 'string') {
+            return res.sendStatus(403);
+        }
+
+        req.auth = decoded as AuthTokenPayload;
         next();
-    });
+    } catch {
+        return res.sendStatus(403);
+    }
 };
 
-// POST /api/auth/login - Get a token
-app.post('/api/auth/login', (req, res) => {
-    const { userId } = req.body;
-    if (typeof userId !== 'string') {
-        return res.status(400).json({ error: 'UserID must be a string' });
-    }
-    if (userId.length < 8 || userId.length > 128) {
-        return res.status(400).json({ error: 'Invalid UserID length' });
-    }
-    // In a real app, we would verify a password here.
-    // For this game, we are trusting the client provided userId but signing it
-    // so that only our server can generate valid tokens for score submission.
-    // This prevents random people from "curling" scores without at least running the client logic once.
+function resolveOptionalViewerPlayerId(req: express.Request): string | null {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return null;
 
-    const user = { userId };
-    const accessToken = jwt.sign(user, JWT_SECRET, { expiresIn: '24h' });
-    res.json({ accessToken });
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (typeof decoded === 'object' && decoded !== null && typeof decoded.sub === 'string') {
+            return decoded.sub;
+        }
+    } catch {
+        // Ignore invalid tokens for public leaderboard requests.
+    }
+
+    return null;
+}
+
+// POST /api/auth/guest - Create a fresh anonymous session.
+app.post('/api/auth/guest', (_req, res) => {
+    res.json(createGuestSession());
+});
+
+// Legacy route: keep for older clients, but issue server-generated guest sessions.
+app.post('/api/auth/login', (_req, res) => {
+    res.json(createGuestSession());
 });
 
 // POST /api/scores - Submit a new score (PROTECTED)
-app.post('/api/scores', authenticateToken, async (req: any, res: any) => {
+app.post('/api/scores', authenticateToken, async (req: AuthenticatedRequest, res) => {
     try {
-        const { user_id, username, avatar, score, difficulty } = req.body;
+        const { username, avatar, score, difficulty } = req.body;
+        const userId = req.auth?.sub;
 
         // Validation
         if (
-            typeof user_id !== 'string' ||
+            typeof userId !== 'string' ||
             typeof username !== 'string' ||
             typeof avatar !== 'string' ||
             typeof score !== 'number' ||
             typeof difficulty !== 'string'
         ) {
             return res.status(400).json({ error: 'Invalid payload' });
-        }
-
-        // Verify that the token matches the submitted score's user_id
-        if (req.user?.userId !== user_id) {
-            return res.status(403).json({ error: 'Token mismatch' });
         }
 
         if (!['easy', 'normal', 'hard'].includes(difficulty)) {
@@ -159,7 +222,7 @@ app.post('/api/scores', authenticateToken, async (req: any, res: any) => {
             return res.status(400).json({ error: 'Invalid score range' });
         }
 
-        if (user_id.length < 8 || user_id.length > 128) {
+        if (userId.length < 8 || userId.length > 128) {
             return res.status(400).json({ error: 'Invalid user id' });
         }
 
@@ -180,7 +243,7 @@ app.post('/api/scores', authenticateToken, async (req: any, res: any) => {
             `INSERT INTO leaderboard (user_id, username, avatar, score, difficulty)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING id, created_at`,
-            [user_id, username, avatar, score, difficulty]
+            [userId, username, avatar, score, difficulty]
         );
 
         res.status(201).json({
@@ -199,6 +262,7 @@ app.post('/api/scores', authenticateToken, async (req: any, res: any) => {
 app.get('/api/leaderboard/:difficulty', async (req, res) => {
     try {
         const { difficulty } = req.params;
+        const viewerPlayerId = resolveOptionalViewerPlayerId(req);
         const parsedLimit = Number.parseInt(String(req.query.limit ?? '50'), 10);
         const limit = Number.isFinite(parsedLimit)
             ? Math.min(Math.max(parsedLimit, 1), 100)
@@ -213,7 +277,6 @@ app.get('/api/leaderboard/:difficulty', async (req, res) => {
 
         // Build time filter
         let timeFilter = '';
-        const params: any[] = [difficulty];
         if (period === 'today') {
             timeFilter = `AND created_at >= NOW() - INTERVAL '1 day'`;
         } else if (period === 'week') {
@@ -224,7 +287,8 @@ app.get('/api/leaderboard/:difficulty', async (req, res) => {
 
         // Get top scores for each user (best score per user)
         const result = await pool.query(
-            `SELECT id, user_id, username, avatar, score, created_at
+            `SELECT id, username, avatar, score, created_at,
+              CASE WHEN $4::text IS NULL THEN false ELSE user_id = $4::text END AS is_me
        FROM (
          SELECT
            id,
@@ -243,7 +307,7 @@ app.get('/api/leaderboard/:difficulty', async (req, res) => {
        WHERE rn = 1
        ORDER BY score ASC, created_at ASC
        LIMIT $2 OFFSET $3`,
-            [difficulty, limit, offset]
+            [difficulty, limit, offset, viewerPlayerId]
         );
 
         // Also return total count for pagination
@@ -274,6 +338,9 @@ app.get('/api/user/:userId/rank/:difficulty', async (req, res) => {
 
         if (!['easy', 'normal', 'hard'].includes(difficulty)) {
             return res.status(400).json({ error: 'Invalid difficulty' });
+        }
+        if (typeof userId !== 'string' || userId.length < 8 || userId.length > 128) {
+            return res.status(400).json({ error: 'Invalid user id' });
         }
 
         // Get user's best score
@@ -317,7 +384,13 @@ app.get('/api/user/:userId/rank/:difficulty', async (req, res) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
     cors: {
-        origin: corsOrigin,
+        origin: (origin, callback) => {
+            if (isOriginAllowed(origin)) {
+                callback(null, true);
+                return;
+            }
+            callback(new Error('Not allowed by CORS'));
+        },
         methods: ['GET', 'POST']
     }
 });

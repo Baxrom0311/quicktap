@@ -8,6 +8,10 @@ Copy `.env.example` to `.env` and fill in your values:
 cp .env.example .env
 ```
 
+For Docker full-stack runs, set:
+- `CORS_ORIGIN_DOCKER=http://localhost:3001,http://localhost:5173`
+- `GUEST_TOKEN_TTL_SECONDS=2592000` (optional)
+
 ## Development
 
 ```bash
@@ -21,22 +25,36 @@ pnpm run dev:api
 ## Docker Setup
 
 ```bash
-# Start PostgreSQL
-docker-compose up -d
+# Build and run full stack
+docker compose up --build -d
 
-# Run migrations
-psql -h localhost -U postgres -d quicktap -f server/schema.sql
+# Check API health
+curl http://localhost:3001/api/health
 ```
 
 ## API Endpoints
 
+### POST /api/auth/guest
+Create an anonymous guest session token.
+
+**Response:**
+```json
+{
+  "accessToken": "<jwt>",
+  "playerId": "f0b9b48d5a3f4a7db31f08d62c2a7c1e",
+  "expiresInSeconds": 2592000
+}
+```
+
 ### POST /api/scores
 Submit a new score to the leaderboard.
+
+`Authorization: Bearer <accessToken>` is required.  
+`user_id` is derived from the token on the server side.
 
 **Request:**
 ```json
 {
-  "user_id": "uuid",
   "username": "Player123",
   "avatar": "😀",
   "score": 150,
@@ -56,17 +74,19 @@ Submit a new score to the leaderboard.
 ### GET /api/leaderboard/:difficulty
 Get top 100 scores for a difficulty level.
 
+If `Authorization: Bearer <accessToken>` is provided, each row includes `is_me`.
+
 **Response:**
 ```json
 {
   "leaderboard": [
     {
       "id": "uuid",
-      "user_id": "uuid",
       "username": "Player123",
       "avatar": "😀",
       "score": 150,
-      "created_at": "2026-01-28T00:00:00Z"
+      "created_at": "2026-01-28T00:00:00Z",
+      "is_me": true
     }
   ]
 }

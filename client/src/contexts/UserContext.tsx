@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { UserProfile } from '@shared/types';
 import type { Difficulty } from '@/hooks/useGameState';
-import { login, getUserRank } from '@/lib/api';
+import { ensureGuestSession, getPlayerId, getUserRank } from '@/lib/api';
 
 interface UserContextType {
     user: UserProfile | null;
@@ -38,57 +38,82 @@ function saveUserProfile(user: UserProfile) {
 export function UserProvider({ children }: { children: React.ReactNode }) {
     const [user, setUserState] = useState<UserProfile | null>(() => loadUserProfile());
 
-    // Login when user is set or loaded
-    useEffect(() => {
-        if (user?.userId) {
-            login(user.userId)
-                .then(() => {
-                    console.log('Logged in successfully');
-                    syncStats();
-                })
-                .catch(err => console.error('Login failed:', err));
-        }
-    }, [user?.userId]);
-
     const setUser = (newUser: UserProfile) => {
-        setUserState(newUser);
-        saveUserProfile(newUser);
+        const sessionPlayerId = getPlayerId();
+        const normalizedUser = sessionPlayerId
+            ? { ...newUser, userId: sessionPlayerId }
+            : newUser;
+
+        setUserState(normalizedUser);
+        saveUserProfile(normalizedUser);
     };
 
-    const syncStats = async () => {
-        if (!user) return;
+    const syncStatsForUser = async (targetUser: UserProfile) => {
         try {
             const difficulties: Difficulty[] = ['easy', 'normal', 'hard'];
             const updates: Partial<UserProfile['stats']> = {};
 
             for (const diff of difficulties) {
-                const { best_score } = await getUserRank(user.userId, diff);
+                const { best_score } = await getUserRank(targetUser.userId, diff);
                 if (best_score !== null) {
                     updates[diff] = {
-                        ...user.stats[diff],
+                        ...targetUser.stats[diff],
                         bestScore: best_score
                     };
                 } else {
-                    updates[diff] = user.stats[diff];
+                    updates[diff] = targetUser.stats[diff];
                 }
             }
 
             const updatedUser = {
-                ...user,
+                ...targetUser,
                 stats: {
-                    ...user.stats,
+                    ...targetUser.stats,
                     ...updates
                 }
             };
 
             // Only update if changed to avoid loops
-            if (JSON.stringify(updatedUser) !== JSON.stringify(user)) {
+            if (JSON.stringify(updatedUser) !== JSON.stringify(targetUser)) {
                 setUser(updatedUser);
             }
         } catch (error) {
             console.error('Failed to sync stats:', error);
         }
     };
+
+    const syncStats = async () => {
+        if (!user) return;
+        await syncStatsForUser(user);
+    };
+
+    // Ensure anonymous server session exists and align local profile userId with server-issued playerId.
+    useEffect(() => {
+        if (!user) return;
+        let cancelled = false;
+
+        const bootstrapSession = async () => {
+            try {
+                const session = await ensureGuestSession(false);
+                if (cancelled) return;
+
+                if (session.playerId !== user.userId) {
+                    setUser({ ...user, userId: session.playerId });
+                    return;
+                }
+
+                await syncStatsForUser(user);
+            } catch (err) {
+                console.error('Failed to initialize guest session:', err);
+            }
+        };
+
+        bootstrapSession();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [user?.userId]);
 
     const updateStats = (difficulty: Difficulty, score: number) => {
         if (!user) return;

@@ -69,6 +69,33 @@
     - Frontend: `http://localhost:5173`
     - Backend: `http://localhost:3001`
 
+## 🐳 Run Fully In Docker
+
+Use this when you want the full stack (frontend + API + PostgreSQL) in containers.
+
+1. **Prepare env**
+   ```bash
+   cp .env.example .env
+   ```
+   Set at least:
+   - `DB_PASSWORD`
+   - `JWT_SECRET`
+   - `CORS_ORIGIN_DOCKER=http://localhost:3001,http://localhost:5173`
+
+2. **Build and run**
+   ```bash
+   docker compose up --build -d
+   ```
+
+3. **Open app**
+   - App + API: `http://localhost:3001`
+   - Health check: `http://localhost:3001/api/health`
+
+4. **Stop**
+   ```bash
+   docker compose down
+   ```
+
 ## 🛡️ Security Note
 
 This project uses:

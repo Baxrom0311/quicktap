@@ -1,5 +1,8 @@
 -- QuickTap Leaderboard Database Schema
 
+-- Needed for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Create leaderboard table
 CREATE TABLE IF NOT EXISTS leaderboard (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

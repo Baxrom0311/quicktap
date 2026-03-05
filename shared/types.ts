@@ -38,11 +38,11 @@ export interface UserProfile {
 // Leaderboard entry interface
 export interface LeaderboardEntry {
     id: string;
-    user_id: string;
     username: string;
     avatar: string;
     score: number;
     created_at: string;
+    is_me?: boolean;
 }
 
 // API response types
@@ -60,7 +60,6 @@ export interface RankResponse {
 }
 
 export interface SubmitScoreRequest {
-    user_id: string;
     username: string;
     avatar: string;
     score: number;
@@ -73,10 +72,8 @@ export interface SubmitScoreResponse {
     created_at: string;
 }
 
-export interface LoginRequest {
-    userId: string;
-}
-
-export interface LoginResponse {
+export interface GuestSessionResponse {
     accessToken: string;
+    playerId: string;
+    expiresInSeconds: number;
 }
