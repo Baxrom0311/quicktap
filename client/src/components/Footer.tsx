@@ -228,7 +228,15 @@ export function Footer({ bestTime, averageTime }: FooterProps) {
         {/* Copyright */}
         <div className="mt-6 pt-4 border-t border-border/50 text-center">
           <p className="text-muted-foreground text-sm">
-            QuickTap — Reaktsiya tezligingizni sinab ko'ring
+            Created by{" "}
+            <a
+              href="https://t.me/bakhromdev"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-white transition-colors"
+            >
+              @bakhromdev
+            </a>
           </p>
         </div>
       </div>
