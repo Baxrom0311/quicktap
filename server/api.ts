@@ -16,6 +16,7 @@ import type { CorsOptions } from 'cors';
 dotenv.config();
 
 const app = express();
+app.set('trust proxy', 1);
 const port = process.env.PORT || 3001;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -52,7 +53,8 @@ const corsOriginHandler: CorsOptions['origin'] = (origin, callback) => {
         callback(null, true);
         return;
     }
-    callback(new Error('Not allowed by CORS'));
+    // Reject unknown browser origins quietly so bots or embeds do not spam error logs.
+    callback(null, false);
 };
 
 // Middleware
@@ -389,7 +391,7 @@ const io = new Server(httpServer, {
                 callback(null, true);
                 return;
             }
-            callback(new Error('Not allowed by CORS'));
+            callback(null, false);
         },
         methods: ['GET', 'POST']
     }
