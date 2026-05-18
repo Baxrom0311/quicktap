@@ -9,12 +9,31 @@
  */
 
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useCallback, useRef, useState } from "react";
-import { Volume2, VolumeX, Upload, Share2, Send, Flame, Trophy } from "lucide-react";
+import {
+  useEffect,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import {
+  Volume2,
+  VolumeX,
+  Upload,
+  Share2,
+  Send,
+  Flame,
+  Trophy,
+} from "lucide-react";
 import { toast } from "sonner";
 import { useAntiTamper } from "@/hooks/useAntiTamper";
 import { useConfetti } from "@/hooks/useConfetti";
-import type { GameState, DifficultyConfig, Difficulty, GameMode } from "@/hooks/useGameState";
+import type {
+  GameState,
+  DifficultyConfig,
+  Difficulty,
+  GameMode,
+} from "@/hooks/useGameState";
 import { GENIUS_ROUNDS } from "@/hooks/useGameState";
 import { useLeaderboard } from "@/hooks/useLeaderboard";
 import { useUser } from "@/contexts/UserContext";
@@ -27,6 +46,7 @@ interface GameAreaProps {
   difficulty: Difficulty;
   difficultyConfig: DifficultyConfig;
   onTap: () => void;
+  onReadyVisible: () => void;
   onReset: () => void;
   onTryAgain: () => void;
   onNextRound?: () => void;
@@ -57,6 +77,7 @@ export function GameArea({
   difficulty,
   difficultyConfig,
   onTap,
+  onReadyVisible,
   onReset,
   onTryAgain,
   onNextRound,
@@ -94,9 +115,14 @@ export function GameArea({
     }
 
     // Successful tap - play different sound based on reaction time
-    if ((gameState === "result" || gameState === "round_summary") && prevState === "ready" && reactionTime !== null) {
+    if (
+      (gameState === "result" || gameState === "round_summary") &&
+      prevState === "ready" &&
+      reactionTime !== null
+    ) {
       // Adjust threshold based on difficulty
-      const excellentThreshold = difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
+      const excellentThreshold =
+        difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
       if (reactionTime < excellentThreshold) {
         playExcellent();
       } else {
@@ -105,75 +131,101 @@ export function GameArea({
     }
 
     prevGameStateRef.current = gameState;
-  }, [gameState, reactionTime, difficulty, playTargetAppear, playError, playSuccess, playExcellent]);
+  }, [
+    gameState,
+    reactionTime,
+    difficulty,
+    playTargetAppear,
+    playError,
+    playSuccess,
+    playExcellent,
+  ]);
 
-  const handleClick = () => {
-    if (gameState === "waiting" || gameState === "ready") {
-      onTap();
+  useLayoutEffect(() => {
+    if (gameState === "ready") {
+      onReadyVisible();
     }
-  };
+  }, [gameState, onReadyVisible]);
 
-  // Touch handler for zero-delay mobile taps
-  const handleTouchStart = (e: React.TouchEvent) => {
-    if (gameState === "waiting" || gameState === "ready") {
-      e.preventDefault(); // Prevent click from also firing
-      onTap();
-    }
-  };
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (gameState !== "waiting" && gameState !== "ready") return;
 
-  // Keyboard event handler
-  const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    // Ignore hotkeys when user is typing in input/textarea fields
-    const target = document.activeElement as HTMLElement;
-    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-
-    if (isInput) {
-      // Allow default behavior for inputs (typing, removing focus on Escape maybe?)
-      // Actually, let's just return and let browser handle it.
-      // Exception: If we want Escape to blur input? 
-      if (event.code === "Escape") {
-        target.blur();
-        return;
-      }
+    const target = event.target as HTMLElement;
+    if (
+      target.closest(
+        "button,a,input,textarea,select,[role='button'],[data-ignore-game-tap]"
+      )
+    ) {
       return;
     }
 
-    // Space bar to tap/try again/next round
-    if (event.code === "Space") {
-      event.preventDefault();
-      if (gameState === "ready" || gameState === "waiting") {
-        onTap();
-      } else if (gameState === "round_summary" && onNextRound) {
-        onNextRound();
-      } else if (gameState === "result" || gameState === "final_result") {
-        onTryAgain();
+    event.preventDefault();
+    onTap();
+  };
+
+  // Keyboard event handler
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent) => {
+      // Ignore hotkeys when user is typing in input/textarea fields
+      const target = document.activeElement as HTMLElement;
+      const isInput =
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable;
+
+      if (isInput) {
+        // Allow default behavior for inputs (typing, removing focus on Escape maybe?)
+        // Actually, let's just return and let browser handle it.
+        // Exception: If we want Escape to blur input?
+        if (event.code === "Escape") {
+          target.blur();
+          return;
+        }
+        return;
       }
-    }
 
-    // Enter key to tap/try again (same as spacebar)
-    if (event.code === "Enter") {
-      event.preventDefault();
-      if (gameState === "ready" || gameState === "waiting") {
-        onTap();
-      } else if (gameState === "round_summary" && onNextRound) {
-        onNextRound();
-      } else if (gameState === "early" || gameState === "result" || gameState === "final_result") {
-        onTryAgain();
+      // Space bar to tap/try again/next round
+      if (event.code === "Space") {
+        event.preventDefault();
+        if (gameState === "ready" || gameState === "waiting") {
+          onTap();
+        } else if (gameState === "round_summary" && onNextRound) {
+          onNextRound();
+        } else if (gameState === "result" || gameState === "final_result") {
+          onTryAgain();
+        }
       }
-    }
 
-    // Escape key to go back
-    if (event.code === "Escape") {
-      event.preventDefault();
-      onReset();
-    }
+      // Enter key to tap/try again (same as spacebar)
+      if (event.code === "Enter") {
+        event.preventDefault();
+        if (gameState === "ready" || gameState === "waiting") {
+          onTap();
+        } else if (gameState === "round_summary" && onNextRound) {
+          onNextRound();
+        } else if (
+          gameState === "early" ||
+          gameState === "result" ||
+          gameState === "final_result"
+        ) {
+          onTryAgain();
+        }
+      }
 
-    // M key to toggle mute
-    if (event.code === "KeyM") {
-      event.preventDefault();
-      toggleMute();
-    }
-  }, [gameState, onTap, onTryAgain, onReset, onNextRound, toggleMute]);
+      // Escape key to go back
+      if (event.code === "Escape") {
+        event.preventDefault();
+        onReset();
+      }
+
+      // M key to toggle mute
+      if (event.code === "KeyM") {
+        event.preventDefault();
+        toggleMute();
+      }
+    },
+    [gameState, onTap, onTryAgain, onReset, onNextRound, toggleMute]
+  );
 
   // Add keyboard event listener
   useEffect(() => {
@@ -186,18 +238,18 @@ export function GameArea({
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center cursor-pointer select-none relative overflow-hidden"
-      onClick={handleClick}
-      onTouchStart={handleTouchStart}
+      onPointerDown={handlePointerDown}
       tabIndex={0}
       style={{
-        touchAction: 'manipulation',
-        background: gameState === "ready"
-          ? difficulty === "hard"
-            ? "oklch(0.15 0.08 25)"
-            : "oklch(0.15 0.1 142)"
-          : gameState === "early"
-            ? "oklch(0.15 0.1 25)"
-            : "oklch(0.08 0 0)",
+        touchAction: "manipulation",
+        background:
+          gameState === "ready"
+            ? difficulty === "hard"
+              ? "oklch(0.15 0.08 25)"
+              : "oklch(0.15 0.1 142)"
+            : gameState === "early"
+              ? "oklch(0.15 0.1 25)"
+              : "oklch(0.08 0 0)",
       }}
     >
       {/* Background pattern */}
@@ -213,14 +265,18 @@ export function GameArea({
       <div className="absolute top-6 right-6 z-20 flex items-center gap-4">
         {/* Mute button */}
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             toggleMute();
           }}
           className="p-2 text-white/50 hover:text-white transition-colors"
           title={isMuted ? "Ovozni yoqish [M]" : "Ovozni o'chirish [M]"}
         >
-          {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+          {isMuted ? (
+            <VolumeX className="w-6 h-6" />
+          ) : (
+            <Volume2 className="w-6 h-6" />
+          )}
         </button>
 
         {/* Difficulty indicator */}
@@ -237,7 +293,13 @@ export function GameArea({
 
       <AnimatePresence mode="wait">
         {gameState === "waiting" && (
-          <WaitingState key="waiting" difficultyConfig={difficultyConfig} currentRound={currentRound} totalRounds={totalRounds} gameMode={gameMode} />
+          <WaitingState
+            key="waiting"
+            difficultyConfig={difficultyConfig}
+            currentRound={currentRound}
+            totalRounds={totalRounds}
+            gameMode={gameMode}
+          />
         )}
         {gameState === "ready" && (
           <ReadyState key="ready" difficultyConfig={difficultyConfig} />
@@ -286,7 +348,7 @@ export function GameArea({
       {/* Back button - always visible */}
       {(gameState === "waiting" || gameState === "ready") && (
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             onReset();
           }}
@@ -331,7 +393,12 @@ interface WaitingStateProps {
   gameMode?: GameMode;
 }
 
-function WaitingState({ difficultyConfig, currentRound = 1, totalRounds = 1, gameMode = "classic" }: WaitingStateProps) {
+function WaitingState({
+  difficultyConfig,
+  currentRound = 1,
+  totalRounds = 1,
+  gameMode = "classic",
+}: WaitingStateProps) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -425,10 +492,12 @@ function EarlyState({ onTryAgain }: EarlyStateProps) {
       <div className="font-display text-6xl md:text-8xl text-destructive tracking-wider">
         JUDA ERTA!
       </div>
-      <p className="mt-4 text-white/60 text-lg">Nishon paydo bo'lishini kuting</p>
+      <p className="mt-4 text-white/60 text-lg">
+        Nishon paydo bo'lishini kuting
+      </p>
 
       <button
-        onClick={(e) => {
+        onClick={e => {
           e.stopPropagation();
           onTryAgain();
         }}
@@ -452,8 +521,17 @@ interface RoundSummaryStateProps {
   onNextRound: () => void;
 }
 
-function RoundSummaryState({ reactionTime, difficultyConfig, currentRound, totalRounds, roundResults, onNextRound }: RoundSummaryStateProps) {
-  const currentAvg = Math.round(roundResults.reduce((s, t) => s + t, 0) / roundResults.length);
+function RoundSummaryState({
+  reactionTime,
+  difficultyConfig,
+  currentRound,
+  totalRounds,
+  roundResults,
+  onNextRound,
+}: RoundSummaryStateProps) {
+  const currentAvg = Math.round(
+    roundResults.reduce((s, t) => s + t, 0) / roundResults.length
+  );
 
   return (
     <motion.div
@@ -478,24 +556,32 @@ function RoundSummaryState({ reactionTime, difficultyConfig, currentRound, total
       >
         {reactionTime}
       </motion.div>
-      <div className="font-display text-xl text-white/60 tracking-widest">MS</div>
+      <div className="font-display text-xl text-white/60 tracking-widest">
+        MS
+      </div>
 
       {/* Round dots */}
       <div className="flex justify-center gap-3 mt-6">
         {Array.from({ length: totalRounds }).map((_, i) => (
-          <div
-            key={i}
-            className="flex flex-col items-center gap-1"
-          >
+          <div key={i} className="flex flex-col items-center gap-1">
             <div
               className="w-10 h-10 flex items-center justify-center font-display text-sm border-2"
               style={{
-                borderColor: i < roundResults.length ? difficultyConfig.color : 'rgba(255,255,255,0.15)',
-                backgroundColor: i < roundResults.length ? `${difficultyConfig.color}20` : 'transparent',
-                color: i < roundResults.length ? difficultyConfig.color : 'rgba(255,255,255,0.3)',
+                borderColor:
+                  i < roundResults.length
+                    ? difficultyConfig.color
+                    : "rgba(255,255,255,0.15)",
+                backgroundColor:
+                  i < roundResults.length
+                    ? `${difficultyConfig.color}20`
+                    : "transparent",
+                color:
+                  i < roundResults.length
+                    ? difficultyConfig.color
+                    : "rgba(255,255,255,0.3)",
               }}
             >
-              {i < roundResults.length ? roundResults[i] : '—'}
+              {i < roundResults.length ? roundResults[i] : "—"}
             </div>
           </div>
         ))}
@@ -503,12 +589,13 @@ function RoundSummaryState({ reactionTime, difficultyConfig, currentRound, total
 
       {/* Running average */}
       <div className="mt-4 text-white/50 font-display tracking-wider">
-        O'RTACHA: <span style={{ color: difficultyConfig.color }}>{currentAvg}ms</span>
+        O'RTACHA:{" "}
+        <span style={{ color: difficultyConfig.color }}>{currentAvg}ms</span>
       </div>
 
       {/* Next round button */}
       <button
-        onClick={(e) => {
+        onClick={e => {
           e.stopPropagation();
           onNextRound();
         }}
@@ -518,8 +605,7 @@ function RoundSummaryState({ reactionTime, difficultyConfig, currentRound, total
           borderColor: difficultyConfig.color,
         }}
       >
-        KEYINGI RAUND →
-        <span className="ml-3 text-sm opacity-60">[SPACE]</span>
+        KEYINGI RAUND →<span className="ml-3 text-sm opacity-60">[SPACE]</span>
       </button>
     </motion.div>
   );
@@ -538,16 +624,29 @@ interface FinalResultStateProps {
   isNewBest: boolean;
 }
 
-function FinalResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, onReset, roundResults, roundBest, isNewBest }: FinalResultStateProps) {
+function FinalResultState({
+  reactionTime,
+  difficulty,
+  difficultyConfig,
+  onTryAgain,
+  onReset,
+  roundResults,
+  roundBest,
+  isNewBest,
+}: FinalResultStateProps) {
   const rating = getReactionRating(reactionTime, difficulty);
   const { user, updateStats } = useUser();
-  const { submitUserScore } = useLeaderboard(difficulty);
+  const { submitUserScore } = useLeaderboard(difficulty, "all", {
+    autoFetch: false,
+    refreshAfterSubmit: false,
+  });
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const { fire: fireConfetti } = useConfetti();
 
   useEffect(() => {
-    const excellentThreshold = difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
+    const excellentThreshold =
+      difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
     if (reactionTime < excellentThreshold || isNewBest) {
       fireConfetti();
     }
@@ -597,7 +696,10 @@ function FinalResultState({ reactionTime, difficulty, difficultyConfig, onTryAga
 
       {/* Rating */}
       <div className="mt-4">
-        <span className="font-display text-3xl tracking-wider" style={{ color: rating.color }}>
+        <span
+          className="font-display text-3xl tracking-wider"
+          style={{ color: rating.color }}
+        >
           {rating.label}
         </span>
       </div>
@@ -617,23 +719,31 @@ function FinalResultState({ reactionTime, difficulty, difficultyConfig, onTryAga
       {/* All round results */}
       <div className="mt-6 flex justify-center gap-3 flex-wrap">
         {roundResults.map((time, i) => (
-          <div
-            key={i}
-            className="flex flex-col items-center"
-          >
+          <div key={i} className="flex flex-col items-center">
             <div className="text-xs text-white/30 font-display">R{i + 1}</div>
             <div
               className="w-14 h-12 flex items-center justify-center font-display text-lg border-2"
               style={{
-                borderColor: time === roundBest ? difficultyConfig.color : 'rgba(255,255,255,0.15)',
-                backgroundColor: time === roundBest ? `${difficultyConfig.color}20` : 'transparent',
-                color: time === roundBest ? difficultyConfig.color : 'white',
+                borderColor:
+                  time === roundBest
+                    ? difficultyConfig.color
+                    : "rgba(255,255,255,0.15)",
+                backgroundColor:
+                  time === roundBest
+                    ? `${difficultyConfig.color}20`
+                    : "transparent",
+                color: time === roundBest ? difficultyConfig.color : "white",
               }}
             >
               {time}
             </div>
             {time === roundBest && (
-              <div className="text-xs font-display" style={{ color: difficultyConfig.color }}>⭐</div>
+              <div
+                className="text-xs font-display"
+                style={{ color: difficultyConfig.color }}
+              >
+                ⭐
+              </div>
             )}
           </div>
         ))}
@@ -642,22 +752,28 @@ function FinalResultState({ reactionTime, difficulty, difficultyConfig, onTryAga
       {/* Share buttons */}
       <div className="mt-6 flex justify-center gap-4">
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             const text = `🧠 QuickTap Genius Mode: ${reactionTime}ms o'rtacha (${roundResults.length} raund)!`;
             const url = window.location.origin;
-            window.open(`https://t.me/share/url?url=${url}&text=${encodeURIComponent(text)}`, '_blank');
+            window.open(
+              `https://t.me/share/url?url=${url}&text=${encodeURIComponent(text)}`,
+              "_blank"
+            );
           }}
           className="flex items-center gap-2 px-5 py-2 bg-[#0088cc] text-white font-display hover:bg-[#007dba] transition-colors"
         >
           <Send className="w-4 h-4" /> Telegram
         </button>
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             const text = `🧠 QuickTap Genius: ${reactionTime}ms avg!`;
             const url = window.location.origin;
-            window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${url}`, '_blank');
+            window.open(
+              `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${url}`,
+              "_blank"
+            );
           }}
           className="flex items-center gap-2 px-5 py-2 bg-black border border-white/20 text-white font-display hover:bg-white/10 transition-colors"
         >
@@ -669,7 +785,10 @@ function FinalResultState({ reactionTime, difficulty, difficultyConfig, onTryAga
       <div className="mt-6 flex flex-col sm:flex-row gap-3 justify-center">
         {user && !submitted && (
           <button
-            onClick={(e) => { e.stopPropagation(); handleSubmitScore(); }}
+            onClick={e => {
+              e.stopPropagation();
+              handleSubmitScore();
+            }}
             disabled={submitting}
             className="px-6 py-3 bg-transparent border-2 border-primary text-primary font-display text-lg tracking-wider hover:bg-primary hover:text-primary-foreground transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
@@ -683,14 +802,23 @@ function FinalResultState({ reactionTime, difficulty, difficultyConfig, onTryAga
           </div>
         )}
         <button
-          onClick={(e) => { e.stopPropagation(); onTryAgain(); }}
+          onClick={e => {
+            e.stopPropagation();
+            onTryAgain();
+          }}
           className="px-8 py-3 font-display text-xl tracking-wider text-primary-foreground border-2 hover:opacity-90 transition-colors"
-          style={{ backgroundColor: difficultyConfig.color, borderColor: difficultyConfig.color }}
+          style={{
+            backgroundColor: difficultyConfig.color,
+            borderColor: difficultyConfig.color,
+          }}
         >
           QAYTA O'YNASH [SPACE]
         </button>
         <button
-          onClick={(e) => { e.stopPropagation(); onReset(); }}
+          onClick={e => {
+            e.stopPropagation();
+            onReset();
+          }}
           className="px-8 py-3 bg-transparent border-2 border-white/30 text-white/60 font-display text-xl tracking-wider hover:border-white hover:text-white transition-colors"
         >
           BOSH SAHIFA [ESC]
@@ -710,10 +838,21 @@ interface ResultStateProps {
   isNewBest: boolean;
 }
 
-function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, onReset, streak, isNewBest }: ResultStateProps) {
+function ResultState({
+  reactionTime,
+  difficulty,
+  difficultyConfig,
+  onTryAgain,
+  onReset,
+  streak,
+  isNewBest,
+}: ResultStateProps) {
   const rating = getReactionRating(reactionTime, difficulty);
   const { user, updateStats } = useUser();
-  const { submitUserScore } = useLeaderboard(difficulty);
+  const { submitUserScore } = useLeaderboard(difficulty, "all", {
+    autoFetch: false,
+    refreshAfterSubmit: false,
+  });
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const { fire: fireConfetti } = useConfetti();
@@ -723,7 +862,8 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
 
   // Fire confetti on excellent results or new personal best
   useEffect(() => {
-    const excellentThreshold = difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
+    const excellentThreshold =
+      difficulty === "easy" ? 250 : difficulty === "hard" ? 180 : 220;
     if (reactionTime < excellentThreshold || isNewBest) {
       fireConfetti();
     }
@@ -741,7 +881,7 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
         duration: 3000,
       });
     } catch (error) {
-      console.error('Failed to submit score:', error);
+      console.error("Failed to submit score:", error);
       toast.error("Leaderboard'ga yuklanmadi", {
         description: "Backend API ishlamayapti yoki xatolik yuz berdi",
         duration: 4000,
@@ -826,22 +966,28 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
       {/* Social Share Buttons */}
       <div className="mt-8 mb-8 flex justify-center gap-4">
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             const text = `QuickTap o'yinida ${reactionTime}ms natija qayd etdim!`;
             const url = window.location.origin;
-            window.open(`https://t.me/share/url?url=${url}&text=${encodeURIComponent(text)}`, '_blank');
+            window.open(
+              `https://t.me/share/url?url=${url}&text=${encodeURIComponent(text)}`,
+              "_blank"
+            );
           }}
           className="flex items-center gap-2 px-6 py-3 bg-[#0088cc] text-white rounded-lg font-display hover:bg-[#007dba] transition-colors"
         >
           <Send className="w-5 h-5" /> Telegram
         </button>
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             const text = `QuickTap o'yinida ${reactionTime}ms natija!`;
             const url = window.location.origin;
-            window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${url}`, '_blank');
+            window.open(
+              `https://twitter.com/intent/tweet?text=${encodeURIComponent(text)}&url=${url}`,
+              "_blank"
+            );
           }}
           className="flex items-center gap-2 px-6 py-3 bg-black border border-white/20 text-white rounded-lg font-display hover:bg-white/10 transition-colors"
         >
@@ -854,7 +1000,7 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
         {/* Submit to leaderboard */}
         {user && !submitted && (
           <button
-            onClick={(e) => {
+            onClick={e => {
               e.stopPropagation();
               handleSubmitScore();
             }}
@@ -873,7 +1019,7 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
         )}
 
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             onTryAgain();
           }}
@@ -887,7 +1033,7 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
           <span className="ml-3 text-sm opacity-60">[SPACE]</span>
         </button>
         <button
-          onClick={(e) => {
+          onClick={e => {
             e.stopPropagation();
             onReset();
           }}
@@ -901,15 +1047,25 @@ function ResultState({ reactionTime, difficulty, difficultyConfig, onTryAgain, o
   );
 }
 
-function getReactionRating(time: number, difficulty: Difficulty): { label: string; color: string } {
+function getReactionRating(
+  time: number,
+  difficulty: Difficulty
+): { label: string; color: string } {
   // Adjust thresholds based on difficulty
-  const multiplier = difficulty === "easy" ? 1.2 : difficulty === "hard" ? 0.85 : 1;
+  const multiplier =
+    difficulty === "easy" ? 1.2 : difficulty === "hard" ? 0.85 : 1;
 
-  if (time < 150 * multiplier) return { label: "G'AYRIODDIY!", color: "oklch(0.85 0.3 142)" };
-  if (time < 200 * multiplier) return { label: "CHAQMOQ KABI!", color: "oklch(0.85 0.3 142)" };
-  if (time < 250 * multiplier) return { label: "A'LO!", color: "oklch(0.8 0.25 142)" };
-  if (time < 300 * multiplier) return { label: "AJOYIB!", color: "oklch(0.75 0.2 142)" };
-  if (time < 350 * multiplier) return { label: "YAXSHI", color: "oklch(0.7 0.15 90)" };
-  if (time < 400 * multiplier) return { label: "O'RTACHA", color: "oklch(0.65 0.1 60)" };
+  if (time < 150 * multiplier)
+    return { label: "G'AYRIODDIY!", color: "oklch(0.85 0.3 142)" };
+  if (time < 200 * multiplier)
+    return { label: "CHAQMOQ KABI!", color: "oklch(0.85 0.3 142)" };
+  if (time < 250 * multiplier)
+    return { label: "A'LO!", color: "oklch(0.8 0.25 142)" };
+  if (time < 300 * multiplier)
+    return { label: "AJOYIB!", color: "oklch(0.75 0.2 142)" };
+  if (time < 350 * multiplier)
+    return { label: "YAXSHI", color: "oklch(0.7 0.15 90)" };
+  if (time < 400 * multiplier)
+    return { label: "O'RTACHA", color: "oklch(0.65 0.1 60)" };
   return { label: "MASHQ QILING", color: "oklch(0.6 0.05 30)" };
 }

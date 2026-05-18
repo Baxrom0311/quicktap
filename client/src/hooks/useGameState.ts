@@ -1,6 +1,13 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 
-export type GameState = "idle" | "waiting" | "ready" | "result" | "early" | "round_summary" | "final_result";
+export type GameState =
+  | "idle"
+  | "waiting"
+  | "ready"
+  | "result"
+  | "early"
+  | "round_summary"
+  | "final_result";
 export type Difficulty = "easy" | "normal" | "hard";
 export type GameMode = "classic" | "genius";
 
@@ -82,7 +89,10 @@ function saveHistory(history: GameAttempt[]) {
 function loadDifficulty(): Difficulty {
   try {
     const stored = localStorage.getItem(DIFFICULTY_KEY);
-    if (stored && (stored === "easy" || stored === "normal" || stored === "hard")) {
+    if (
+      stored &&
+      (stored === "easy" || stored === "normal" || stored === "hard")
+    ) {
       return stored;
     }
   } catch (e) {
@@ -121,7 +131,9 @@ export function useGameState() {
   const [gameState, setGameState] = useState<GameState>("idle");
   const [reactionTime, setReactionTime] = useState<number | null>(null);
   const [history, setHistory] = useState<GameAttempt[]>(() => loadHistory());
-  const [difficulty, setDifficultyState] = useState<Difficulty>(() => loadDifficulty());
+  const [difficulty, setDifficultyState] = useState<Difficulty>(() =>
+    loadDifficulty()
+  );
   const [gameMode, setGameModeState] = useState<GameMode>(() => loadGameMode());
   const [streak, setStreak] = useState(0);
   const [isNewBest, setIsNewBest] = useState(false);
@@ -133,60 +145,126 @@ export function useGameState() {
   const startTimeRef = useRef<number | null>(null);
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  const gameStateRef = useRef<GameState>(gameState);
+  const historyRef = useRef(history);
+  const difficultyRef = useRef(difficulty);
+  const gameModeRef = useRef(gameMode);
+  const roundResultsRef = useRef(roundResults);
+
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
+
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
+
+  useEffect(() => {
+    difficultyRef.current = difficulty;
+  }, [difficulty]);
+
+  useEffect(() => {
+    gameModeRef.current = gameMode;
+  }, [gameMode]);
+
+  useEffect(() => {
+    roundResultsRef.current = roundResults;
+  }, [roundResults]);
+
   const difficultyConfig = DIFFICULTY_CONFIGS[difficulty];
   const totalRounds = gameMode === "genius" ? GENIUS_ROUNDS : 1;
 
-  // Filter history by current difficulty for stats
-  const filteredHistory = history.filter(h => h.difficulty === difficulty);
+  // Filter history by current difficulty for stats. Memoized so every tap does the
+  // smallest possible amount of work before the next frame is painted.
+  const filteredHistory = useMemo(
+    () => history.filter(h => h.difficulty === difficulty),
+    [history, difficulty]
+  );
 
-  // Calculate average from filtered history
-  const averageTime = filteredHistory.length > 0
-    ? Math.round(filteredHistory.reduce((sum, h) => sum + h.time, 0) / filteredHistory.length)
-    : null;
+  const { averageTime, bestTime } = useMemo(() => {
+    if (filteredHistory.length === 0) {
+      return { averageTime: null, bestTime: null };
+    }
 
-  // Best time from filtered history
-  const bestTime = filteredHistory.length > 0
-    ? Math.min(...filteredHistory.map(h => h.time))
-    : null;
+    let total = 0;
+    let best = Infinity;
+    for (const attempt of filteredHistory) {
+      total += attempt.time;
+      if (attempt.time < best) best = attempt.time;
+    }
 
-  // Multi-round computed values
-  const roundAverage = roundResults.length > 0
-    ? Math.round(roundResults.reduce((sum, t) => sum + t, 0) / roundResults.length)
-    : null;
+    return {
+      averageTime: Math.round(total / filteredHistory.length),
+      bestTime: best,
+    };
+  }, [filteredHistory]);
 
-  const roundBest = roundResults.length > 0
-    ? Math.min(...roundResults)
-    : null;
+  const { roundAverage, roundBest } = useMemo(() => {
+    if (roundResults.length === 0) {
+      return { roundAverage: null, roundBest: null };
+    }
+
+    let total = 0;
+    let best = Infinity;
+    for (const time of roundResults) {
+      total += time;
+      if (time < best) best = time;
+    }
+
+    return {
+      roundAverage: Math.round(total / roundResults.length),
+      roundBest: best,
+    };
+  }, [roundResults]);
+
+  const setTrackedGameState = useCallback((nextState: GameState) => {
+    gameStateRef.current = nextState;
+    setGameState(nextState);
+  }, []);
+
+  const clearReadyTimer = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+  }, []);
 
   // Set difficulty with persistence
   const setDifficulty = useCallback((newDifficulty: Difficulty) => {
+    difficultyRef.current = newDifficulty;
     setDifficultyState(newDifficulty);
     saveDifficulty(newDifficulty);
   }, []);
 
   // Set game mode with persistence
   const setGameMode = useCallback((newMode: GameMode) => {
+    gameModeRef.current = newMode;
     setGameModeState(newMode);
     saveGameMode(newMode);
   }, []);
 
   // Start a single round (internal)
   const startRound = useCallback(() => {
-    setGameState("waiting");
+    clearReadyTimer();
+    startTimeRef.current = null;
+    setTrackedGameState("waiting");
     setReactionTime(null);
 
-    const config = DIFFICULTY_CONFIGS[difficulty];
-    const delay = Math.random() * (config.maxDelay - config.minDelay) + config.minDelay;
+    const config = DIFFICULTY_CONFIGS[difficultyRef.current];
+    const delay =
+      Math.random() * (config.maxDelay - config.minDelay) + config.minDelay;
 
     timeoutRef.current = setTimeout(() => {
-      startTimeRef.current = performance.now();
-      setGameState("ready");
+      timeoutRef.current = null;
+      startTimeRef.current = null;
+      setTrackedGameState("ready");
     }, delay);
-  }, [difficulty]);
+  }, [clearReadyTimer, setTrackedGameState]);
 
   // Start the game
   const startGame = useCallback(() => {
     setCurrentRound(1);
+    roundResultsRef.current = [];
     setRoundResults([]);
     setIsNewBest(false);
     startRound();
@@ -194,9 +272,18 @@ export function useGameState() {
 
   // Start immediately (for multiplayer sync)
   const startImmediate = useCallback(() => {
-    setGameState("ready");
+    clearReadyTimer();
     setReactionTime(null);
-    startTimeRef.current = performance.now();
+    startTimeRef.current = null;
+    setTrackedGameState("ready");
+  }, [clearReadyTimer, setTrackedGameState]);
+
+  // Starts the timer only after the ready screen is committed to the DOM, avoiding
+  // React render/paint latency being counted against the player.
+  const markReadyVisible = useCallback(() => {
+    if (gameStateRef.current === "ready" && startTimeRef.current === null) {
+      startTimeRef.current = performance.now();
+    }
   }, []);
 
   // Proceed to next round (genius mode)
@@ -207,91 +294,106 @@ export function useGameState() {
 
   // Handle tap/click
   const handleTap = useCallback(() => {
-    if (gameState === "waiting") {
-      // Tapped too early
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-      setGameState("early");
+    const currentState = gameStateRef.current;
+
+    if (currentState === "waiting") {
+      // Flip the ref immediately so pointer/click fallbacks cannot double-process
+      // before React finishes rendering the early-tap screen.
+      setTrackedGameState("early");
+      clearReadyTimer();
       setStreak(0);
-    } else if (gameState === "ready") {
-      // Calculate reaction time
-      const endTime = performance.now();
-      const time = Math.round(endTime - (startTimeRef.current || endTime));
-      setReactionTime(time);
+      return;
+    }
 
-      // Check if new personal best
-      const currentBest = history
-        .filter(h => h.difficulty === difficulty)
-        .reduce((min, h) => Math.min(min, h.time), Infinity);
-      setIsNewBest(time < currentBest);
+    if (currentState !== "ready") return;
 
-      // Update streak
-      setStreak(prev => prev + 1);
+    // Flip state synchronously in refs first; this keeps rapid double taps from
+    // producing duplicate scores while React is still scheduling updates.
+    gameStateRef.current = "result";
 
-      if (gameMode === "genius") {
-        // Multi-round: save round result
-        const newRoundResults = [...roundResults, time];
-        setRoundResults(newRoundResults);
+    // Calculate reaction time with the fewest possible operations on the hot path.
+    const endTime = performance.now();
+    const time = Math.round(endTime - (startTimeRef.current ?? endTime));
+    setReactionTime(time);
 
-        if (newRoundResults.length >= GENIUS_ROUNDS) {
-          // All rounds done — save average to history and show final result
-          const avg = Math.round(newRoundResults.reduce((s, t) => s + t, 0) / newRoundResults.length);
+    const currentDifficulty = difficultyRef.current;
+    const currentHistory = historyRef.current;
+    let currentBest = Infinity;
+    for (const attempt of currentHistory) {
+      if (
+        attempt.difficulty === currentDifficulty &&
+        attempt.time < currentBest
+      ) {
+        currentBest = attempt.time;
+      }
+    }
+    setIsNewBest(time < currentBest);
 
-          const newAttempt: GameAttempt = {
-            id: crypto.randomUUID(),
-            time: avg,
-            timestamp: new Date(),
-            difficulty,
-          };
+    setStreak(prev => prev + 1);
 
-          setHistory(prev => {
-            const updated = [newAttempt, ...prev].slice(0, MAX_HISTORY);
-            saveHistory(updated);
-            return updated;
-          });
+    if (gameModeRef.current === "genius") {
+      const newRoundResults = [...roundResultsRef.current, time];
+      roundResultsRef.current = newRoundResults;
+      setRoundResults(newRoundResults);
 
-          setReactionTime(avg);
-          setGameState("final_result");
-        } else {
-          // More rounds to go — show round summary briefly
-          setGameState("round_summary");
-        }
-      } else {
-        // Classic mode: single round, save immediately
+      if (newRoundResults.length >= GENIUS_ROUNDS) {
+        const avg = Math.round(
+          newRoundResults.reduce((s, t) => s + t, 0) / newRoundResults.length
+        );
         const newAttempt: GameAttempt = {
           id: crypto.randomUUID(),
-          time,
+          time: avg,
           timestamp: new Date(),
-          difficulty,
+          difficulty: currentDifficulty,
         };
 
         setHistory(prev => {
           const updated = [newAttempt, ...prev].slice(0, MAX_HISTORY);
+          historyRef.current = updated;
           saveHistory(updated);
           return updated;
         });
 
-        setGameState("result");
+        setReactionTime(avg);
+        setTrackedGameState("final_result");
+      } else {
+        setTrackedGameState("round_summary");
       }
+      return;
     }
-  }, [gameState, difficulty, gameMode, roundResults, history]);
+
+    const newAttempt: GameAttempt = {
+      id: crypto.randomUUID(),
+      time,
+      timestamp: new Date(),
+      difficulty: currentDifficulty,
+    };
+
+    setHistory(prev => {
+      const updated = [newAttempt, ...prev].slice(0, MAX_HISTORY);
+      historyRef.current = updated;
+      saveHistory(updated);
+      return updated;
+    });
+
+    setTrackedGameState("result");
+  }, [clearReadyTimer, setTrackedGameState]);
 
   // Reset to idle state
   const reset = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    setGameState("idle");
+    clearReadyTimer();
+    startTimeRef.current = null;
+    setTrackedGameState("idle");
     setReactionTime(null);
+    setIsNewBest(false);
     setCurrentRound(1);
+    roundResultsRef.current = [];
     setRoundResults([]);
-  }, []);
+  }, [clearReadyTimer, setTrackedGameState]);
 
   // Clear history
   const clearHistory = useCallback(() => {
+    historyRef.current = [];
     setHistory([]);
     localStorage.removeItem(STORAGE_KEY);
   }, []);
@@ -299,11 +401,9 @@ export function useGameState() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
+      clearReadyTimer();
     };
-  }, []);
+  }, [clearReadyTimer]);
 
   return {
     gameState,
@@ -331,6 +431,7 @@ export function useGameState() {
     startGame,
     startImmediate,
     handleTap,
+    markReadyVisible,
     reset,
     clearHistory,
   };

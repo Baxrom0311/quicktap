@@ -1,496 +1,579 @@
-import { Server, Socket } from 'socket.io';
-import { randomInt } from 'crypto';
+import { Server, Socket } from "socket.io";
+import { randomInt } from "crypto";
 
 interface Player {
-    socketId: string;
-    userId: string;
-    username: string;
-    avatar: string; // avatar id
-    score: number;
-    isReady: boolean;
-    finished: boolean;
-    lastActionTime: number; // For rate limiting
+  socketId: string;
+  userId: string;
+  username: string;
+  avatar: string; // avatar id
+  score: number;
+  isReady: boolean;
+  finished: boolean;
+  lastActionTime: number; // For rate limiting
 }
 
 interface Room {
-    code: string;
-    players: Player[];
-    status: 'lobby' | 'countdown' | 'playing' | 'finished';
-    createdAt: number;
-    startTime?: number; // Timestamp when the "GO" signal was sent
-    // Best-of-3 fields
-    currentRound: number;   // 1-based
-    totalRounds: number;    // 3
-    roundWinners: string[]; // userId of each round's winner
+  code: string;
+  players: Player[];
+  status: "lobby" | "countdown" | "playing" | "finished";
+  createdAt: number;
+  startTime?: number; // Authoritative server timestamp when the round becomes playable
+  // Best-of-3 fields
+  currentRound: number; // 1-based
+  totalRounds: number; // 3
+  roundWinners: string[]; // userId of each round's winner
 }
 
 const rooms = new Map<string, Room>();
 
 // Map to quickly find which room a socket belongs to (O(1) lookup)
 const socketToRoom = new Map<string, string>();
+const countdownTimers = new Map<string, NodeJS.Timeout>();
 
 // Helper to generate 6-digit code
 function generateRoomCode(): string {
-    let code = '';
-    do {
-        code = randomInt(100000, 999999).toString();
-    } while (rooms.has(code));
-    return code;
+  let code = "";
+  do {
+    code = randomInt(100000, 999999).toString();
+  } while (rooms.has(code));
+  return code;
 }
 
 interface UserProfilePayload {
-    userId: string;
-    username: string;
-    avatar: string;
+  userId: string;
+  username: string;
+  avatar: string;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
-    return typeof value === 'object' && value !== null;
+  return typeof value === "object" && value !== null;
 }
 
 function normalizeRoomCode(value: unknown): string | null {
-    if (typeof value !== 'string') return null;
-    const trimmed = value.trim();
-    return /^\d{6}$/.test(trimmed) ? trimmed : null;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return /^\d{6}$/.test(trimmed) ? trimmed : null;
 }
 
 function isValidUserProfile(value: unknown): value is UserProfilePayload {
-    if (!isObject(value)) return false;
-    const userId = value.userId;
-    const username = value.username;
-    const avatar = value.avatar;
+  if (!isObject(value)) return false;
+  const userId = value.userId;
+  const username = value.username;
+  const avatar = value.avatar;
 
-    if (
-        typeof userId !== 'string' ||
-        typeof username !== 'string' ||
-        typeof avatar !== 'string'
-    ) {
-        return false;
-    }
+  if (
+    typeof userId !== "string" ||
+    typeof username !== "string" ||
+    typeof avatar !== "string"
+  ) {
+    return false;
+  }
 
-    if (userId.length < 8 || userId.length > 128) return false;
-    if (username.length < 3 || username.length > 15) return false;
-    if (!/^[a-zA-Z0-9_]+$/.test(username)) return false;
-    if (avatar.length < 1 || avatar.length > 64) return false;
+  if (userId.length < 8 || userId.length > 128) return false;
+  if (username.length < 3 || username.length > 15) return false;
+  if (!/^[a-zA-Z0-9_]+$/.test(username)) return false;
+  if (avatar.length < 1 || avatar.length > 64) return false;
 
-    return true;
+  return true;
 }
 
 function asCallback(value: unknown): ((payload: any) => void) | null {
-    return typeof value === 'function' ? (value as (payload: any) => void) : null;
+  return typeof value === "function" ? (value as (payload: any) => void) : null;
 }
 
 // Room cleanup interval (TTL) — removes stale rooms to prevent memory leaks
 const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 60 * 1000; // Check every 60 seconds
+const ROUND_COUNTDOWN_MS = 3000;
+const START_PACKET_GRACE_MS = 100;
+
+function clearCountdownTimer(code: string) {
+  const timer = countdownTimers.get(code);
+  if (!timer) return;
+
+  clearTimeout(timer);
+  countdownTimers.delete(code);
+}
+
+function promoteRoomIfStartReached(room: Room, graceMs = 0): boolean {
+  if (room.status !== "countdown" || !room.startTime) {
+    return room.status === "playing";
+  }
+
+  if (Date.now() + graceMs < room.startTime) {
+    return false;
+  }
+
+  room.status = "playing";
+  return true;
+}
+
+function scheduleRoundStart(
+  io: Server,
+  code: string,
+  delayMs = ROUND_COUNTDOWN_MS
+) {
+  const room = rooms.get(code);
+  if (!room) return;
+
+  clearCountdownTimer(code);
+
+  const serverNow = Date.now();
+  const startAt = serverNow + delayMs;
+  room.status = "countdown";
+  room.startTime = startAt;
+
+  const payload = {
+    round: room.currentRound,
+    totalRounds: room.totalRounds,
+    startAt,
+    serverNow,
+  };
+
+  io.to(code).emit("update_room", room);
+  io.to(code).emit("game_countdown_start", payload);
+
+  const countdownTimer = setTimeout(() => {
+    const currentRoom = rooms.get(code);
+    if (
+      !currentRoom ||
+      currentRoom.status !== "countdown" ||
+      currentRoom.players.length !== 2
+    ) {
+      return;
+    }
+
+    countdownTimers.delete(code);
+    currentRoom.status = "playing";
+    currentRoom.startTime = startAt;
+    io.to(code).emit("game_start", payload);
+  }, delayMs);
+  countdownTimers.set(code, countdownTimer);
+}
 
 function startRoomCleanup(io: Server) {
-    setInterval(() => {
-        const now = Date.now();
-        for (const [code, room] of Array.from(rooms.entries())) {
-            if (now - room.createdAt > ROOM_TTL_MS) {
-                // Notify remaining players before removing
-                io.to(code).emit('game_aborted', { reason: 'Room expired due to inactivity' });
+  setInterval(() => {
+    const now = Date.now();
+    for (const [code, room] of Array.from(rooms.entries())) {
+      if (now - room.createdAt > ROOM_TTL_MS) {
+        clearCountdownTimer(code);
+        // Notify remaining players before removing
+        io.to(code).emit("game_aborted", {
+          reason: "Room expired due to inactivity",
+        });
 
-                // Clean up socket-to-room mappings
-                for (const player of room.players) {
-                    socketToRoom.delete(player.socketId);
-                }
-
-                rooms.delete(code);
-                console.log(`Room ${code} cleaned up (TTL expired)`);
-            }
+        // Clean up socket-to-room mappings
+        for (const player of room.players) {
+          socketToRoom.delete(player.socketId);
         }
-    }, CLEANUP_INTERVAL_MS);
+
+        rooms.delete(code);
+        console.log(`Room ${code} cleaned up (TTL expired)`);
+      }
+    }
+  }, CLEANUP_INTERVAL_MS);
 }
 
 export function setupSocket(io: Server) {
-    // Start room cleanup timer
-    startRoomCleanup(io);
+  // Start room cleanup timer
+  startRoomCleanup(io);
 
-    io.on('connection', (socket: Socket) => {
-        console.log(`User connected: ${socket.id}`);
+  io.on("connection", (socket: Socket) => {
+    console.log(`User connected: ${socket.id}`);
 
-        // Create Room
-        socket.on('create_room', (userProfile: unknown, callback: unknown) => {
-            const cb = asCallback(callback);
-            if (!isValidUserProfile(userProfile)) {
-                cb?.({ success: false, error: 'Invalid user profile' });
-                return;
-            }
-
-            if (socketToRoom.has(socket.id)) {
-                cb?.({ success: false, error: 'Already in a room' });
-                return;
-            }
-
-            const code = generateRoomCode();
-
-            const player: Player = {
-                socketId: socket.id,
-                userId: userProfile.userId,
-                username: userProfile.username,
-                avatar: userProfile.avatar,
-                score: 0,
-                isReady: false,
-                finished: false,
-                lastActionTime: Date.now()
-            };
-
-            const room: Room = {
-                code,
-                players: [player],
-                status: 'lobby',
-                createdAt: Date.now(),
-                currentRound: 1,
-                totalRounds: 3,
-                roundWinners: []
-            };
-
-            rooms.set(code, room);
-            socketToRoom.set(socket.id, code);
-            socket.join(code);
-
-            cb?.({ success: true, code, room });
-            console.log(`Room created: ${code} by ${userProfile.username}`);
-        });
-
-        // Join Room
-        socket.on('join_room', (payload: unknown, callback: unknown) => {
-            const cb = asCallback(callback);
-            if (!isObject(payload)) {
-                cb?.({ success: false, error: 'Invalid payload' });
-                return;
-            }
-
-            const code = normalizeRoomCode(payload.code);
-            const userProfile = payload.userProfile;
-            if (!code || !isValidUserProfile(userProfile)) {
-                cb?.({ success: false, error: 'Invalid join request' });
-                return;
-            }
-
-            const existingRoomCode = socketToRoom.get(socket.id);
-            if (existingRoomCode && existingRoomCode !== code) {
-                cb?.({ success: false, error: 'Already in another room' });
-                return;
-            }
-
-            const room = rooms.get(code);
-
-            if (!room) {
-                cb?.({ success: false, error: 'Room not found' });
-                return;
-            }
-
-            if (room.status !== 'lobby') {
-                cb?.({ success: false, error: 'Game already in progress' });
-                return;
-            }
-
-            if (room.players.length >= 2) {
-                cb?.({ success: false, error: 'Room is full' });
-                return;
-            }
-
-            if (room.players.some((p) => p.userId === userProfile.userId)) {
-                cb?.({ success: false, error: 'User already in room' });
-                return;
-            }
-
-            if (existingRoomCode === code) {
-                cb?.({ success: true, room });
-                return;
-            }
-
-            const player: Player = {
-                socketId: socket.id,
-                userId: userProfile.userId,
-                username: userProfile.username,
-                avatar: userProfile.avatar,
-                score: 0,
-                isReady: false,
-                finished: false,
-                lastActionTime: Date.now()
-            };
-
-            room.players.push(player);
-            socketToRoom.set(socket.id, code);
-            socket.join(code);
-
-            // Notify everyone in room (including sender) that player joined
-            io.to(code).emit('update_room', room);
-
-            cb?.({ success: true, room });
-            console.log(`User ${userProfile.username} joined room ${code}`);
-        });
-
-        // Player Ready
-        socket.on('player_ready', (codeInput: unknown) => {
-            const code = normalizeRoomCode(codeInput);
-            if (!code) return;
-            const room = rooms.get(code);
-            if (!room) return;
-            if (room.status !== 'lobby' && room.status !== 'finished') return;
-
-            const player = room.players.find(p => p.socketId === socket.id);
-            if (player) {
-                if (room.status === 'finished') {
-                    // Explicit rematch flow: reset match state, then treat this click as "ready".
-                    room.status = 'lobby';
-                    room.currentRound = 1;
-                    room.roundWinners = [];
-                    room.startTime = undefined;
-                    room.players.forEach((p) => {
-                        p.isReady = false;
-                        p.finished = false;
-                        p.score = 0;
-                    });
-                }
-
-                player.isReady = true;
-
-                // Notify update
-                io.to(code).emit('update_room', room);
-
-                // Check if all players ready (must be 2 players)
-                if (room.players.length === 2 && room.players.every(p => p.isReady)) {
-                    room.status = 'countdown';
-                    io.to(code).emit('update_room', room);
-                    io.to(code).emit('game_countdown_start');
-
-                    // Start game after 3 seconds
-                    setTimeout(() => {
-                        const currentRoom = rooms.get(code);
-                        if (
-                            currentRoom &&
-                            currentRoom.status === 'countdown' &&
-                            currentRoom.players.length === 2 &&
-                            currentRoom.players.every((p) => p.isReady)
-                        ) {
-                            currentRoom.status = 'playing';
-                            currentRoom.startTime = Date.now();
-                            io.to(code).emit('game_start');
-                        }
-                    }, 3000);
-                }
-            }
-        });
-
-        // Score Update
-        socket.on('score_update', (payload: unknown) => {
-            if (!isObject(payload)) return;
-            const code = normalizeRoomCode(payload.code);
-            const score = Number(payload.score);
-            if (!code || !Number.isInteger(score) || score < 0 || score > 10000) {
-                return;
-            }
-
-            const room = rooms.get(code);
-            if (!room || room.status !== 'playing') return;
-
-            const player = room.players.find(p => p.socketId === socket.id);
-            if (player) {
-                player.score = score;
-                // Broadcast score update to opponent (or everyone)
-                socket.to(code).emit('opponent_score', { userId: player.userId, score });
-            }
-        });
-
-        // Game Finished (Player finished)
-        socket.on('player_finished', (payload: unknown) => {
-            if (!isObject(payload)) return;
-            const code = normalizeRoomCode(payload.code);
-            const score = Number(payload.score);
-            if (!code || !Number.isInteger(score) || score < 0 || score > 10000) {
-                socket.emit('error_message', 'Invalid score payload');
-                socket.disconnect(true);
-                return;
-            }
-
-            const room = rooms.get(code);
-            if (!room || room.status !== 'playing') return;
-
-            const player = room.players.find(p => p.socketId === socket.id);
-            if (player) {
-                // Rate Limiting: Prevent spamming events
-                const now = Date.now();
-                if (now - player.lastActionTime < 200) {
-                    console.warn(`Rate limit exceeded for ${player.username}`);
-                    // Simply ignore if spamming too fast
-                    return;
-                }
-                player.lastActionTime = now;
-
-                // Anti-Cheat: Validate score
-                const MIN_HUMAN_REACTION_TIME = 100; // ms
-
-                // Check 1: Impossible human reaction time
-                if (score < MIN_HUMAN_REACTION_TIME) {
-                    console.warn(`CHEAT DETECTED: Impossible reaction time ${score}ms from ${player.username}`);
-                    socket.emit('error_message', 'CHEAT DETECTED: Impossible reaction time');
-                    socket.disconnect(true);
-                    return;
-                }
-
-                // Check 2: Server-side delta validation (if startTime exists)
-                if (room.startTime) {
-                    const serverDelta = Date.now() - room.startTime;
-                    // The claimed score MUST be <= serverDelta (allowing for small clock drift/processing time)
-                    // serverDelta = ReactionTime + RTT + Processing
-                    // So ReactionTime <= serverDelta
-                    // We add a small buffer (e.g. 100ms) just in case of weird clock sync issues, though Date.now() is server-side.
-                    // Wait, Date.now() is server time.
-
-                    if (score > serverDelta + 200) {
-                        console.warn(`Timetravel detected? Score: ${score}, ServerDelta: ${serverDelta}`);
-                        // This usually means the client clock is way off or they are cheating by sending a timestamp?
-                        // No, they send a duration. If duration > serverDelta, they claim they reacted longer than the game has been running?
-                        // That's actually "honest" lag, not cheating. Cheating is usually SMALLER score.
-                        // So this check is less critical for "too fast" cheating.
-                    }
-
-                    // Check 3: Max Lag Tolerance (The "Hold Back" attack)
-                    // If user waits 1s (real) but sends "150ms" (fake), the packet arrives at T=1000+RTT.
-                    // serverDelta = 1000+. Score = 150.
-                    // Diff = 850ms. This looks like HUGE lag.
-                    // We set a threshold. If implied lag is > 400ms, it's either unplayable internet or cheating.
-                    const impliedLag = serverDelta - score;
-                    if (impliedLag > 400) {
-                        console.warn(`Suspicious lag detected: ${player.username} (Lag: ${impliedLag}ms)`);
-
-                        if (impliedLag > 800) {
-                            console.warn(`CHEAT DETECTED: Review lag tolerance exceeded (${impliedLag}ms) for ${player.username}`);
-                            socket.emit('error_message', 'Connection too unstable or manipulation detected');
-                            socket.disconnect(true);
-                            return;
-                        }
-                    }
-                }
-
-                player.finished = true;
-                player.score = score; // Final score
-
-                // Notify others
-                io.to(code).emit('player_finished_event', { userId: player.userId, score });
-
-                // Check if all finished
-                if (room.players.every(p => p.finished)) {
-                    if (room.players.length < 2) {
-                        return;
-                    }
-
-                    // Determine round winner (lower score = better)
-                    const sortedPlayers = [...room.players].sort((a, b) => a.score - b.score);
-                    const roundWinner = sortedPlayers[0];
-                    room.roundWinners.push(roundWinner.userId);
-
-                    // Count wins
-                    const winsNeeded = Math.ceil(room.totalRounds / 2); // 2 for best-of-3
-                    const player1Wins = room.roundWinners.filter(id => id === room.players[0].userId).length;
-                    const player2Wins = room.roundWinners.filter(id => id === room.players[1].userId).length;
-
-                    if (player1Wins >= winsNeeded || player2Wins >= winsNeeded) {
-                        // Match is over
-                        room.status = 'finished';
-                        const matchWinnerId = player1Wins >= winsNeeded ? room.players[0].userId : room.players[1].userId;
-
-                        io.to(code).emit('game_over', {
-                            result: room.players,
-                            winnerId: matchWinnerId,
-                            roundWinners: room.roundWinners,
-                            currentRound: room.currentRound,
-                            totalRounds: room.totalRounds
-                        });
-                    } else {
-                        // More rounds to play - emit round result, then prepare next round
-                        room.status = 'countdown';
-                        io.to(code).emit('round_over', {
-                            roundNumber: room.currentRound,
-                            roundWinnerId: roundWinner.userId,
-                            roundWinners: room.roundWinners,
-                            scores: room.players.map(p => ({ userId: p.userId, score: p.score }))
-                        });
-
-                        // Reset for next round after a brief delay
-                        room.currentRound++;
-                        room.players.forEach(p => {
-                            p.score = 0;
-                            p.finished = false;
-                        });
-
-                        // Auto-start next round after 3 seconds
-                        setTimeout(() => {
-                            const currentRoom = rooms.get(code);
-                            if (
-                                currentRoom &&
-                                currentRoom.status === 'countdown' &&
-                                currentRoom.players.length === 2
-                            ) {
-                                currentRoom.status = 'playing';
-                                currentRoom.startTime = Date.now();
-                                io.to(code).emit('game_start', {
-                                    round: currentRoom.currentRound,
-                                    totalRounds: currentRoom.totalRounds
-                                });
-                            }
-                        }, 3000);
-                    }
-                }
-            }
-        });
-
-        // Leave Room / Disconnect
-        const handleLeave = () => {
-            const code = socketToRoom.get(socket.id);
-            if (!code) return; // Socket was not in any room
-
-            const room = rooms.get(code);
-            if (!room) {
-                socketToRoom.delete(socket.id);
-                return;
-            }
-
-            const index = room.players.findIndex((p: Player) => p.socketId === socket.id);
-            if (index !== -1) {
-                const player = room.players[index];
-                room.players.splice(index, 1);
-                socketToRoom.delete(socket.id);
-
-                if (room.players.length === 0) {
-                    rooms.delete(code);
-                } else {
-                    io.to(code).emit('player_left', { userId: player.userId });
-
-                    // Specific handling based on game state
-                    if (room.status === 'playing' || room.status === 'countdown') {
-                        // Instead of just aborting, the remaining player wins by default!
-                        const remainingPlayer = room.players[0];
-                        room.status = 'finished';
-
-                        io.to(code).emit('game_over', {
-                            result: room.players,
-                            winnerId: remainingPlayer.userId,
-                            reason: 'opponent_disconnected' // Client can use this to show a specific message
-                        });
-                    } else {
-                        // Lobby state - just update room
-                        room.status = 'lobby';
-                        room.currentRound = 1;
-                        room.roundWinners = [];
-                        room.startTime = undefined;
-                        room.players.forEach((p: Player) => {
-                            p.isReady = false;
-                            p.finished = false;
-                            p.score = 0;
-                        });
-                        io.to(code).emit('update_room', room);
-                    }
-                }
-            }
-        };
-
-        socket.on('leave_room', handleLeave);
-        socket.on('disconnect', handleLeave);
+    socket.on("time_sync", (_clientSentAt: unknown, callback: unknown) => {
+      const cb = asCallback(callback);
+      cb?.({ serverNow: Date.now() });
     });
+
+    // Create Room
+    socket.on("create_room", (userProfile: unknown, callback: unknown) => {
+      const cb = asCallback(callback);
+      if (!isValidUserProfile(userProfile)) {
+        cb?.({ success: false, error: "Invalid user profile" });
+        return;
+      }
+
+      if (socketToRoom.has(socket.id)) {
+        cb?.({ success: false, error: "Already in a room" });
+        return;
+      }
+
+      const code = generateRoomCode();
+
+      const player: Player = {
+        socketId: socket.id,
+        userId: userProfile.userId,
+        username: userProfile.username,
+        avatar: userProfile.avatar,
+        score: 0,
+        isReady: false,
+        finished: false,
+        lastActionTime: Date.now(),
+      };
+
+      const room: Room = {
+        code,
+        players: [player],
+        status: "lobby",
+        createdAt: Date.now(),
+        currentRound: 1,
+        totalRounds: 3,
+        roundWinners: [],
+      };
+
+      rooms.set(code, room);
+      socketToRoom.set(socket.id, code);
+      socket.join(code);
+
+      cb?.({ success: true, code, room });
+      console.log(`Room created: ${code} by ${userProfile.username}`);
+    });
+
+    // Join Room
+    socket.on("join_room", (payload: unknown, callback: unknown) => {
+      const cb = asCallback(callback);
+      if (!isObject(payload)) {
+        cb?.({ success: false, error: "Invalid payload" });
+        return;
+      }
+
+      const code = normalizeRoomCode(payload.code);
+      const userProfile = payload.userProfile;
+      if (!code || !isValidUserProfile(userProfile)) {
+        cb?.({ success: false, error: "Invalid join request" });
+        return;
+      }
+
+      const existingRoomCode = socketToRoom.get(socket.id);
+      if (existingRoomCode && existingRoomCode !== code) {
+        cb?.({ success: false, error: "Already in another room" });
+        return;
+      }
+
+      const room = rooms.get(code);
+
+      if (!room) {
+        cb?.({ success: false, error: "Room not found" });
+        return;
+      }
+
+      if (room.status !== "lobby") {
+        cb?.({ success: false, error: "Game already in progress" });
+        return;
+      }
+
+      if (room.players.length >= 2) {
+        cb?.({ success: false, error: "Room is full" });
+        return;
+      }
+
+      if (room.players.some(p => p.userId === userProfile.userId)) {
+        cb?.({ success: false, error: "User already in room" });
+        return;
+      }
+
+      if (existingRoomCode === code) {
+        cb?.({ success: true, room });
+        return;
+      }
+
+      const player: Player = {
+        socketId: socket.id,
+        userId: userProfile.userId,
+        username: userProfile.username,
+        avatar: userProfile.avatar,
+        score: 0,
+        isReady: false,
+        finished: false,
+        lastActionTime: Date.now(),
+      };
+
+      room.players.push(player);
+      socketToRoom.set(socket.id, code);
+      socket.join(code);
+
+      // Notify everyone in room (including sender) that player joined
+      io.to(code).emit("update_room", room);
+
+      cb?.({ success: true, room });
+      console.log(`User ${userProfile.username} joined room ${code}`);
+    });
+
+    // Player Ready
+    socket.on("player_ready", (codeInput: unknown) => {
+      const code = normalizeRoomCode(codeInput);
+      if (!code) return;
+      const room = rooms.get(code);
+      if (!room) return;
+      if (room.status !== "lobby" && room.status !== "finished") return;
+
+      const player = room.players.find(p => p.socketId === socket.id);
+      if (player) {
+        if (room.status === "finished") {
+          // Explicit rematch flow: reset match state, then treat this click as "ready".
+          clearCountdownTimer(code);
+          room.status = "lobby";
+          room.currentRound = 1;
+          room.roundWinners = [];
+          room.startTime = undefined;
+          room.players.forEach(p => {
+            p.isReady = false;
+            p.finished = false;
+            p.score = 0;
+          });
+        }
+
+        player.isReady = true;
+
+        // Notify update
+        io.to(code).emit("update_room", room);
+
+        // Check if all players ready (must be 2 players)
+        if (room.players.length === 2 && room.players.every(p => p.isReady)) {
+          scheduleRoundStart(io, code);
+        }
+      }
+    });
+
+    // Score Update
+    socket.on("score_update", (payload: unknown) => {
+      if (!isObject(payload)) return;
+      const code = normalizeRoomCode(payload.code);
+      const score = Number(payload.score);
+      if (!code || !Number.isInteger(score) || score < 0 || score > 10000) {
+        return;
+      }
+
+      const room = rooms.get(code);
+      if (!room || !promoteRoomIfStartReached(room, START_PACKET_GRACE_MS)) {
+        return;
+      }
+
+      const player = room.players.find(p => p.socketId === socket.id);
+      if (player) {
+        player.score = score;
+        // Broadcast score update to opponent (or everyone)
+        socket
+          .to(code)
+          .emit("opponent_score", { userId: player.userId, score });
+      }
+    });
+
+    // Game Finished (Player finished)
+    socket.on("player_finished", (payload: unknown) => {
+      if (!isObject(payload)) return;
+      const code = normalizeRoomCode(payload.code);
+      const score = Number(payload.score);
+      if (!code || !Number.isInteger(score) || score < 0 || score > 10000) {
+        socket.emit("error_message", "Invalid score payload");
+        socket.disconnect(true);
+        return;
+      }
+
+      const room = rooms.get(code);
+      if (!room || !promoteRoomIfStartReached(room, START_PACKET_GRACE_MS)) {
+        return;
+      }
+
+      const player = room.players.find(p => p.socketId === socket.id);
+      if (player) {
+        // Rate Limiting: Prevent spamming events
+        const now = Date.now();
+        if (now - player.lastActionTime < 200) {
+          console.warn(`Rate limit exceeded for ${player.username}`);
+          // Simply ignore if spamming too fast
+          return;
+        }
+        player.lastActionTime = now;
+
+        // Anti-Cheat: Validate score
+        const MIN_HUMAN_REACTION_TIME = 100; // ms
+
+        // Check 1: Impossible human reaction time
+        if (score < MIN_HUMAN_REACTION_TIME) {
+          console.warn(
+            `CHEAT DETECTED: Impossible reaction time ${score}ms from ${player.username}`
+          );
+          socket.emit(
+            "error_message",
+            "CHEAT DETECTED: Impossible reaction time"
+          );
+          socket.disconnect(true);
+          return;
+        }
+
+        // Check 2: Server-side delta validation (if startTime exists)
+        if (room.startTime) {
+          const serverDelta = Date.now() - room.startTime;
+          // The claimed score MUST be <= serverDelta (allowing for small clock drift/processing time)
+          // serverDelta = ReactionTime + RTT + Processing
+          // So ReactionTime <= serverDelta
+          // We add a small buffer (e.g. 100ms) just in case of weird clock sync issues, though Date.now() is server-side.
+          // Wait, Date.now() is server time.
+
+          if (score > serverDelta + 200) {
+            console.warn(
+              `Timetravel detected? Score: ${score}, ServerDelta: ${serverDelta}`
+            );
+            // This usually means the client clock is way off or they are cheating by sending a timestamp?
+            // No, they send a duration. If duration > serverDelta, they claim they reacted longer than the game has been running?
+            // That's actually "honest" lag, not cheating. Cheating is usually SMALLER score.
+            // So this check is less critical for "too fast" cheating.
+          }
+
+          // Check 3: Max Lag Tolerance (The "Hold Back" attack)
+          // If user waits 1s (real) but sends "150ms" (fake), the packet arrives at T=1000+RTT.
+          // serverDelta = 1000+. Score = 150.
+          // Diff = 850ms. This looks like HUGE lag.
+          // We set a threshold. If implied lag is > 400ms, it's either unplayable internet or cheating.
+          const impliedLag = serverDelta - score;
+          if (impliedLag > 400) {
+            console.warn(
+              `Suspicious lag detected: ${player.username} (Lag: ${impliedLag}ms)`
+            );
+
+            if (impliedLag > 800) {
+              console.warn(
+                `CHEAT DETECTED: Review lag tolerance exceeded (${impliedLag}ms) for ${player.username}`
+              );
+              socket.emit(
+                "error_message",
+                "Connection too unstable or manipulation detected"
+              );
+              socket.disconnect(true);
+              return;
+            }
+          }
+        }
+
+        player.finished = true;
+        player.score = score; // Final score
+
+        // Notify others
+        io.to(code).emit("player_finished_event", {
+          userId: player.userId,
+          score,
+        });
+
+        // Check if all finished
+        if (room.players.every(p => p.finished)) {
+          if (room.players.length < 2) {
+            return;
+          }
+
+          // Determine round winner (lower score = better)
+          const sortedPlayers = [...room.players].sort(
+            (a, b) => a.score - b.score
+          );
+          const roundWinner = sortedPlayers[0];
+          room.roundWinners.push(roundWinner.userId);
+
+          // Count wins
+          const winsNeeded = Math.ceil(room.totalRounds / 2); // 2 for best-of-3
+          const player1Wins = room.roundWinners.filter(
+            id => id === room.players[0].userId
+          ).length;
+          const player2Wins = room.roundWinners.filter(
+            id => id === room.players[1].userId
+          ).length;
+
+          if (player1Wins >= winsNeeded || player2Wins >= winsNeeded) {
+            // Match is over
+            room.status = "finished";
+            const matchWinnerId =
+              player1Wins >= winsNeeded
+                ? room.players[0].userId
+                : room.players[1].userId;
+
+            io.to(code).emit("game_over", {
+              result: room.players,
+              winnerId: matchWinnerId,
+              roundWinners: room.roundWinners,
+              currentRound: room.currentRound,
+              totalRounds: room.totalRounds,
+            });
+          } else {
+            // More rounds to play - emit round result, then prepare next round
+            io.to(code).emit("round_over", {
+              roundNumber: room.currentRound,
+              roundWinnerId: roundWinner.userId,
+              roundWinners: room.roundWinners,
+              scores: room.players.map(p => ({
+                userId: p.userId,
+                score: p.score,
+              })),
+            });
+
+            // Reset for next round after a brief delay
+            room.currentRound++;
+            room.players.forEach(p => {
+              p.score = 0;
+              p.finished = false;
+            });
+
+            scheduleRoundStart(io, code);
+          }
+        }
+      }
+    });
+
+    // Leave Room / Disconnect
+    const handleLeave = () => {
+      const code = socketToRoom.get(socket.id);
+      if (!code) return; // Socket was not in any room
+
+      const room = rooms.get(code);
+      if (!room) {
+        socketToRoom.delete(socket.id);
+        return;
+      }
+
+      const index = room.players.findIndex(
+        (p: Player) => p.socketId === socket.id
+      );
+      if (index !== -1) {
+        const player = room.players[index];
+        room.players.splice(index, 1);
+        socketToRoom.delete(socket.id);
+
+        if (room.players.length === 0) {
+          clearCountdownTimer(code);
+          rooms.delete(code);
+        } else {
+          io.to(code).emit("player_left", { userId: player.userId });
+
+          // Specific handling based on game state
+          if (room.status === "playing" || room.status === "countdown") {
+            clearCountdownTimer(code);
+            // Instead of just aborting, the remaining player wins by default!
+            const remainingPlayer = room.players[0];
+            room.status = "finished";
+
+            io.to(code).emit("game_over", {
+              result: room.players,
+              winnerId: remainingPlayer.userId,
+              reason: "opponent_disconnected", // Client can use this to show a specific message
+            });
+          } else {
+            // Lobby state - just update room
+            room.status = "lobby";
+            room.currentRound = 1;
+            room.roundWinners = [];
+            room.startTime = undefined;
+            room.players.forEach((p: Player) => {
+              p.isReady = false;
+              p.finished = false;
+              p.score = 0;
+            });
+            clearCountdownTimer(code);
+            io.to(code).emit("update_room", room);
+          }
+        }
+      }
+    };
+
+    socket.on("leave_room", handleLeave);
+    socket.on("disconnect", handleLeave);
+  });
 }

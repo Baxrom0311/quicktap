@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS leaderboard (
 CREATE INDEX IF NOT EXISTS idx_difficulty_score ON leaderboard(difficulty, score ASC);
 CREATE INDEX IF NOT EXISTS idx_user_difficulty ON leaderboard(user_id, difficulty);
 CREATE INDEX IF NOT EXISTS idx_created_at ON leaderboard(created_at DESC);
+-- Supports DISTINCT ON / grouped best-score leaderboard queries without a wide sort.
+CREATE INDEX IF NOT EXISTS idx_leaderboard_best_user_score
+  ON leaderboard(difficulty, user_id, score ASC, created_at ASC);
 
 -- Optional: Create a view for best scores per user
 CREATE OR REPLACE VIEW user_best_scores AS

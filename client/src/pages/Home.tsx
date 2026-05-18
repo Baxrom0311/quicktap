@@ -19,7 +19,7 @@ import { ProfileSetupDialog } from "@/components/ProfileSetupDialog";
 import { useUser } from "@/contexts/UserContext";
 import { getAvatarById } from "@shared/types";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 // Multiplayer imports
 import { useMultiplayer } from "@/hooks/useMultiplayer";
@@ -37,18 +37,20 @@ export default function Home() {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   // Multiplayer State
-  const [view, setView] = useState<'main' | 'multiplayer_menu' | 'join_dialog' | 'lobby'>('main');
-  const [joinCode, setJoinCode] = useState<string>('');
+  const [view, setView] = useState<
+    "main" | "multiplayer_menu" | "join_dialog" | "lobby"
+  >("main");
+  const [joinCode, setJoinCode] = useState<string>("");
 
   // Check for join code in URL on mount
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const code = params.get('joinCode');
+    const code = params.get("joinCode");
     if (code) {
       setJoinCode(code);
-      setView('join_dialog');
+      setView("join_dialog");
       // Clean up URL without reload
-      window.history.replaceState({}, '', '/');
+      window.history.replaceState({}, "", "/");
     }
   }, []);
 
@@ -59,14 +61,15 @@ export default function Home() {
     currentRound: mpCurrentRound,
     totalRounds: mpTotalRounds,
     roundWinners,
+    countdownStartAt,
     createRoom,
     joinRoom,
     setReady,
-    sendScore,
     finishGame,
-    leaveRoom
+    leaveRoom,
   } = useMultiplayer(user);
   const prevMpStatusRef = useRef(mpStatus);
+  const multiplayerScoreSentRef = useRef(false);
 
   const {
     gameState,
@@ -81,6 +84,7 @@ export default function Home() {
     startGame,
     startImmediate,
     handleTap,
+    markReadyVisible,
     reset,
     clearHistory,
     streak,
@@ -110,7 +114,8 @@ export default function Home() {
   // Start a fresh local round whenever server transitions into playing.
   useEffect(() => {
     const prevStatus = prevMpStatusRef.current;
-    if (prevStatus !== 'playing' && mpStatus === 'playing') {
+    if (prevStatus !== "playing" && mpStatus === "playing") {
+      multiplayerScoreSentRef.current = false;
       startImmediate();
       initAudioContext();
     }
@@ -118,40 +123,46 @@ export default function Home() {
   }, [mpStatus, startImmediate, initAudioContext]);
 
   useEffect(() => {
-    if (view === 'lobby' && !room) {
-      setView('main');
+    if (view === "lobby" && !room) {
+      setView("main");
     }
   }, [view, room]);
 
-  // Send score when reaction time is recorded
+  // Send the final score once when reaction time is recorded. The server relays
+  // this to the opponent, so a separate live score_update emit is unnecessary.
   useEffect(() => {
-    if (view === 'lobby' && mpStatus === 'playing' && reactionTime !== null) {
-      sendScore(reactionTime);
+    if (
+      view === "lobby" &&
+      mpStatus === "playing" &&
+      reactionTime !== null &&
+      !multiplayerScoreSentRef.current
+    ) {
+      multiplayerScoreSentRef.current = true;
       finishGame(reactionTime);
     }
-  }, [reactionTime, mpStatus, view, sendScore, finishGame]);
+  }, [reactionTime, mpStatus, view, finishGame]);
 
-  const handleMultiplayerTap = () => {
+  const handleMultiplayerTap = useCallback(() => {
     handleTap();
     // Score sending is handled in effect above
-  };
+  }, [handleTap]);
 
-  const handleReset = () => {
-    if (view !== 'main') {
-      if (view === 'lobby') {
+  const handleReset = useCallback(() => {
+    if (view !== "main") {
+      if (view === "lobby") {
         leaveRoom();
       }
-      setView('main');
+      setView("main");
     }
     reset();
-  };
+  }, [leaveRoom, reset, view]);
 
   // Multiplayer Game Over screen
-  if (view === 'lobby' && mpStatus === 'finished' && room) {
+  if (view === "lobby" && mpStatus === "finished" && room) {
     return (
       <MultiplayerGameOver
         players={room.players}
-        currentUserId={user?.userId || ''}
+        currentUserId={user?.userId || ""}
         roundWinners={roundWinners}
         totalRounds={mpTotalRounds}
         onRematch={() => {
@@ -162,15 +173,15 @@ export default function Home() {
         onLeave={() => {
           leaveRoom();
           reset();
-          setView('main');
+          setView("main");
         }}
       />
     );
   }
 
   // Show game area when playing (Single or Multiplayer)
-  if (gameState !== "idle" || (view === 'lobby' && mpStatus === 'playing')) {
-    const isMultiplayerMode = view === 'lobby';
+  if (gameState !== "idle" || (view === "lobby" && mpStatus === "playing")) {
+    const isMultiplayerMode = view === "lobby";
 
     return (
       <GameArea
@@ -179,10 +190,10 @@ export default function Home() {
         difficulty={difficulty}
         difficultyConfig={difficultyConfig}
         onTap={isMultiplayerMode ? handleMultiplayerTap : handleTap}
+        onReadyVisible={markReadyVisible}
         onReset={handleReset}
-        onTryAgain={isMultiplayerMode ? () => { } : startGame}
+        onTryAgain={isMultiplayerMode ? () => {} : startGame}
         onNextRound={nextRound}
-
         // Sound props
         playSuccess={playSuccess}
         playError={playError}
@@ -190,15 +201,12 @@ export default function Home() {
         playExcellent={playExcellent}
         isMuted={isMuted}
         toggleMute={toggleMute}
-
         // Multiplayer props
         isMultiplayer={isMultiplayerMode}
         opponent={opponent}
-
         // Gameplay props
         streak={streak}
         isNewBest={isNewBest}
-
         // Multi-round props
         gameMode={gameMode}
         currentRound={currentRound}
@@ -217,7 +225,7 @@ export default function Home() {
       <ProfileSetupDialog
         open={showProfileSetup || isEditingProfile}
         existingProfile={isEditingProfile ? user : null}
-        onComplete={(profile) => {
+        onComplete={profile => {
           setUser(profile);
           setShowProfileSetup(false);
           setIsEditingProfile(false);
@@ -227,39 +235,42 @@ export default function Home() {
 
       {/* Join Game Dialog */}
       <JoinGameDialog
-        open={view === 'join_dialog'}
+        open={view === "join_dialog"}
         initialCode={joinCode}
-        onJoin={async (code) => {
+        onJoin={async code => {
           const success = await joinRoom(code);
           if (success) {
-            setView('lobby');
+            setView("lobby");
           }
           return success;
         }}
-        onCancel={() => setView('multiplayer_menu')}
+        onCancel={() => setView("multiplayer_menu")}
       />
 
       {/* User Profile Badge (top right) - clickable to edit */}
-      {user && (() => {
-        const avatarData = getAvatarById(user.avatar);
-        return (
-          <button
-            onClick={() => setIsEditingProfile(true)}
-            className="fixed top-6 right-6 z-10 flex items-center gap-3 px-4 py-2 bg-card border-2 border-border hover:border-primary/50 transition-colors cursor-pointer group"
-          >
-            <div className="w-10 h-10 rounded-lg overflow-hidden bg-white/5 border border-border flex items-center justify-center">
-              {avatarData && (
-                <span className="text-2xl">{avatarData.emoji}</span>
-              )}
-            </div>
-            <span className="font-display text-white tracking-wider">{user.username}</span>
-            <Settings className="w-4 h-4 text-white/30 group-hover:text-white/60 transition-colors" />
-          </button>
-        );
-      })()}
+      {user &&
+        (() => {
+          const avatarData = getAvatarById(user.avatar);
+          return (
+            <button
+              onClick={() => setIsEditingProfile(true)}
+              className="fixed top-6 right-6 z-10 flex items-center gap-3 px-4 py-2 bg-card border-2 border-border hover:border-primary/50 transition-colors cursor-pointer group"
+            >
+              <div className="w-10 h-10 rounded-lg overflow-hidden bg-white/5 border border-border flex items-center justify-center">
+                {avatarData && (
+                  <span className="text-2xl">{avatarData.emoji}</span>
+                )}
+              </div>
+              <span className="font-display text-white tracking-wider">
+                {user.username}
+              </span>
+              <Settings className="w-4 h-4 text-white/30 group-hover:text-white/60 transition-colors" />
+            </button>
+          );
+        })()}
 
       <AnimatePresence mode="wait">
-        {view === 'main' && (
+        {view === "main" && (
           <motion.div
             key="start"
             initial={{ opacity: 0 }}
@@ -277,14 +288,14 @@ export default function Home() {
               }}
               difficulty={difficulty}
               difficultyConfig={difficultyConfig}
-              onDifficultyChange={(d) => {
+              onDifficultyChange={d => {
                 playClick();
                 setDifficulty(d);
               }}
               isMuted={isMuted}
               toggleMute={toggleMute}
               gameMode={gameMode}
-              onGameModeChange={(mode) => {
+              onGameModeChange={mode => {
                 playClick();
                 setGameMode(mode);
               }}
@@ -300,7 +311,7 @@ export default function Home() {
                     return;
                   }
                   if (navigator.onLine) {
-                    setView('multiplayer_menu');
+                    setView("multiplayer_menu");
                   } else {
                     toast.error("Multiplayer uchun internet kerak");
                   }
@@ -333,34 +344,40 @@ export default function Home() {
           </motion.div>
         )}
 
-        {view === 'multiplayer_menu' && (
+        {view === "multiplayer_menu" && (
           <div className="flex-1 flex flex-col justify-center">
             <MultiplayerMenu
               onCreate={async () => {
                 const success = await createRoom();
                 if (success) {
-                  setView('lobby');
+                  setView("lobby");
                 }
               }}
-              onJoin={() => setView('join_dialog')}
-              onCancel={() => setView('main')}
+              onJoin={() => setView("join_dialog")}
+              onCancel={() => setView("main")}
             />
           </div>
         )}
 
-        {view === 'lobby' && room && (
+        {view === "lobby" && room && (
           <div className="flex-1 flex flex-col justify-center pt-20">
             <Lobby
               room={room}
-              currentUserSocketId={room.players.find(p => p.userId === user?.userId)?.socketId || ''}
+              currentUserSocketId={
+                room.players.find(p => p.userId === user?.userId)?.socketId ||
+                ""
+              }
               onReady={setReady}
               onLeave={() => {
                 leaveRoom();
-                setView('main');
+                setView("main");
               }}
             />
             {/* Countdown overlay */}
-            <CountdownOverlay active={mpStatus === 'countdown'} />
+            <CountdownOverlay
+              active={mpStatus === "countdown"}
+              targetTime={countdownStartAt}
+            />
           </div>
         )}
       </AnimatePresence>
