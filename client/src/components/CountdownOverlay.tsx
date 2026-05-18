@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface CountdownOverlayProps {
   active: boolean;
@@ -26,10 +26,17 @@ export function CountdownOverlay({
   onComplete,
 }: CountdownOverlayProps) {
   const [count, setCount] = useState<number | null>(null);
+  const countRef = useRef<number | null>(null);
+
+  const setVisibleCount = useCallback((nextCount: number | null) => {
+    if (countRef.current === nextCount) return;
+    countRef.current = nextCount;
+    setCount(nextCount);
+  }, []);
 
   useEffect(() => {
     if (!active) {
-      setCount(null);
+      setVisibleCount(null);
       return;
     }
 
@@ -38,7 +45,7 @@ export function CountdownOverlay({
 
       const tick = () => {
         const nextCount = getCountdownValue(targetTime);
-        setCount(nextCount);
+        setVisibleCount(nextCount);
 
         if (!completed && nextCount === 0) {
           completed = true;
@@ -51,14 +58,14 @@ export function CountdownOverlay({
       return () => window.clearInterval(interval);
     }
 
-    setCount(3);
-    const t2 = setTimeout(() => setCount(2), 1000);
-    const t1 = setTimeout(() => setCount(1), 2000);
+    setVisibleCount(3);
+    const t2 = setTimeout(() => setVisibleCount(2), 1000);
+    const t1 = setTimeout(() => setVisibleCount(1), 2000);
     const go = setTimeout(() => {
-      setCount(0); // 0 = "GO!"
+      setVisibleCount(0); // 0 = "GO!"
       onComplete?.();
     }, 3000);
-    const hide = setTimeout(() => setCount(null), 3600);
+    const hide = setTimeout(() => setVisibleCount(null), 3600);
 
     return () => {
       clearTimeout(t2);
@@ -66,7 +73,7 @@ export function CountdownOverlay({
       clearTimeout(go);
       clearTimeout(hide);
     };
-  }, [active, targetTime, onComplete]);
+  }, [active, targetTime, onComplete, setVisibleCount]);
 
   if (count === null) return null;
 

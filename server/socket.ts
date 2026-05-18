@@ -85,6 +85,7 @@ function asCallback(value: unknown): ((payload: any) => void) | null {
 const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 60 * 1000; // Check every 60 seconds
 const ROUND_COUNTDOWN_MS = 3000;
+const START_PACKET_GRACE_MS = 100;
 
 function clearCountdownTimer(code: string) {
   const timer = countdownTimers.get(code);
@@ -92,6 +93,19 @@ function clearCountdownTimer(code: string) {
 
   clearTimeout(timer);
   countdownTimers.delete(code);
+}
+
+function promoteRoomIfStartReached(room: Room, graceMs = 0): boolean {
+  if (room.status !== "countdown" || !room.startTime) {
+    return room.status === "playing";
+  }
+
+  if (Date.now() + graceMs < room.startTime) {
+    return false;
+  }
+
+  room.status = "playing";
+  return true;
 }
 
 function scheduleRoundStart(
@@ -332,15 +346,9 @@ export function setupSocket(io: Server) {
       }
 
       const room = rooms.get(code);
-      if (!room) return;
-      if (
-        room.status === "countdown" &&
-        room.startTime &&
-        Date.now() >= room.startTime
-      ) {
-        room.status = "playing";
+      if (!room || !promoteRoomIfStartReached(room, START_PACKET_GRACE_MS)) {
+        return;
       }
-      if (room.status !== "playing") return;
 
       const player = room.players.find(p => p.socketId === socket.id);
       if (player) {
@@ -364,15 +372,9 @@ export function setupSocket(io: Server) {
       }
 
       const room = rooms.get(code);
-      if (!room) return;
-      if (
-        room.status === "countdown" &&
-        room.startTime &&
-        Date.now() >= room.startTime
-      ) {
-        room.status = "playing";
+      if (!room || !promoteRoomIfStartReached(room, START_PACKET_GRACE_MS)) {
+        return;
       }
-      if (room.status !== "playing") return;
 
       const player = room.players.find(p => p.socketId === socket.id);
       if (player) {
